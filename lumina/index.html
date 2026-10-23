@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Lumina</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="theme-color" content="#161616">
+<style>
+:root{--bg:#161616;--sf:#212121;--sf2:#2c2c2c;--ln:#343434;--tx:#ececec;--mu:#9a9a9a;--ac:#f2f2f2;--ok:#8fd19e;--er:#e58a8a;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+*{box-sizing:border-box;margin:0}
+html,body{height:100%;background:var(--bg);color:var(--tx);font:16px/1.55 system-ui,sans-serif;overflow:hidden}
+.serif{font-family:Georgia,'Times New Roman',serif}
+#app{display:flex;height:100%}
+#side{width:290px;background:var(--sf);border-right:1px solid var(--ln);display:flex;flex-direction:column;padding:12px;gap:8px;transition:transform .2s;z-index:5}
+#main{flex:1;display:flex;flex-direction:column;min-width:0}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+.btn{background:var(--sf2);border:1px solid var(--ln);border-radius:10px;padding:8px 12px}
+.btn.pri{background:var(--ac);color:#111;border-color:var(--ac)}
+.brand{display:flex;align-items:center;gap:10px;padding:4px 4px 8px;font-size:22px}
+.brand img{width:34px;height:34px;border-radius:50%}
+#list{flex:1;overflow:auto;display:flex;flex-direction:column;gap:2px}
+.ci{padding:8px 10px;border-radius:8px;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--mu)}
+.ci.on,.ci:hover{background:var(--sf2);color:var(--tx)}
+#top{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--ln)}
+#top .t{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#menu{display:none;font-size:22px}
+.chip{font-size:13px;color:var(--mu);border:1px solid var(--ln);border-radius:20px;padding:4px 10px;max-width:42vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#msgs{flex:1;overflow:auto;padding:18px 14px}
+.w{max-width:720px;margin:0 auto}
+.m{margin-bottom:22px}
+.m.u .b{background:var(--sf2);border-radius:16px;padding:10px 14px;display:inline-block;max-width:100%}
+.m.u{text-align:right}.m.u .b{text-align:left}
+.m.a .b{font-family:Georgia,'Times New Roman',serif;font-size:17px;line-height:1.7;word-wrap:break-word}
+pre{background:#0f0f0f;border:1px solid var(--ln);border-radius:10px;padding:10px;overflow-x:auto;font-size:13px;margin:8px 0;text-align:left}
+code{font-family:ui-monospace,Menlo,monospace;font-size:.88em;background:#0f0f0f;padding:1px 5px;border-radius:5px}pre code{padding:0;background:none}
+#empty{text-align:center;margin-top:14vh}#empty img{width:92px;height:92px;border-radius:50%;margin-bottom:14px}#empty h1{font-weight:400;font-size:30px}#empty p{color:var(--mu);margin-top:6px}
+#comp{padding:8px 12px 12px}
+#box{background:var(--sf);border:1px solid var(--ln);border-radius:20px;padding:8px;max-width:720px;margin:0 auto}
+#att{display:flex;flex-wrap:wrap;gap:6px;padding:0 4px 6px}
+.at{background:var(--sf2);border-radius:8px;padding:3px 8px;font-size:13px}
+#row{display:flex;align-items:flex-end;gap:6px}
+#in{flex:1;background:none;border:0;outline:0;color:var(--tx);font:inherit;resize:none;max-height:160px;padding:8px 6px}
+.ib{width:38px;height:38px;border-radius:50%;font-size:20px;flex:none}
+#send{background:var(--ac);color:#111}
+#ov{position:fixed;inset:0;background:#000a;display:none;z-index:9;align-items:flex-end;justify-content:center}
+#ov.on{display:flex}
+#sheet{background:var(--sf);border:1px solid var(--ln);border-radius:20px 20px 0 0;width:100%;max-width:640px;max-height:88%;overflow:auto;padding:16px 16px calc(16px + env(safe-area-inset-bottom,0px))}
+.tabs{display:flex;gap:6px;margin-bottom:14px}.tabs button{flex:1;padding:8px;border-radius:10px;color:var(--mu);background:var(--sf2)}.tabs .on{background:var(--ac);color:#111}
+.card{border:1px solid var(--ln);border-radius:12px;padding:10px 12px;margin:8px 0;display:flex;gap:8px;align-items:center}
+.card .n{flex:1;min-width:0;overflow-wrap:anywhere}.card small{color:var(--mu);display:block}
+input.f{width:100%;background:var(--bg);border:1px solid var(--ln);border-radius:10px;padding:9px 11px;color:var(--tx);font:inherit;margin:4px 0}
+h3{font-weight:400;margin:14px 0 4px}.mu{color:var(--mu);font-size:14px}
+#pg{height:6px;background:var(--sf2);border-radius:4px;margin:8px 0;overflow:hidden;display:none}#pg i{display:block;height:100%;width:0;background:var(--ac)}
+#toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%);background:var(--ac);color:#111;padding:8px 14px;border-radius:20px;font-size:14px;display:none;z-index:20;max-width:90%}
+@media(max-width:760px){#side{position:fixed;inset:0 auto 0 0;transform:translateX(-100%);padding-top:calc(12px + env(safe-area-inset-top,0px))}#side.on{transform:none}#menu{display:block}}
+</style>
+</head>
+<body>
+<div id="app">
+<aside id="side">
+  <div class="brand serif"><img src="icon-192.png" alt="">Lumina</div>
+  <button class="btn pri" id="new">Nova conversa</button>
+  <div id="list"></div>
+  <button class="btn" id="cfg">Modelos e MCP</button>
+</aside>
+<section id="main">
+  <div id="top"><button id="menu" aria-label="Menu">☰</button><div class="t serif" id="ttl">Nova conversa</div><button class="chip" id="chip">Sem modelo</button></div>
+  <div id="msgs"><div class="w" id="w"></div></div>
+  <div id="comp"><div id="box">
+    <div id="att"></div>
+    <div id="row"><button class="ib btn" id="plus" aria-label="Anexar">+</button>
+    <textarea id="in" rows="1" placeholder="Escreva para a Lumina"></textarea>
+    <button class="ib" id="send" aria-label="Enviar">↑</button></div>
+  </div></div>
+</section>
+</div>
+<div id="ov"><div id="sheet"></div></div>
+<div id="toast"></div>
+<input type="file" id="fa" multiple hidden>
+<input type="file" id="fm" accept=".gguf" hidden>
+<script>
+const $=s=>document.querySelector(s);
+const esc=s=>s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+const md=s=>esc(s).replace(/```(\w*)\n?([\s\S]*?)```/g,'<pre><code>$2</code></pre>').replace(/`([^`\n]+)`/g,'<code>$1</code>').replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>').replace(/\n/g,'<br>');
+const toast=t=>{const e=$('#toast');e.textContent=t;e.style.display='block';clearTimeout(toast.t);toast.t=setTimeout(()=>e.style.display='none',3500)};
+const fmt=n=>n>1e9?(n/1e9).toFixed(2)+' GB':(n/1e6).toFixed(0)+' MB';
+/* armazenamento: modelos em IndexedDB, resto em localStorage */
+const dbp=new Promise(r=>{const q=indexedDB.open('lumina',1);q.onupgradeneeded=()=>q.result.createObjectStore('models');q.onsuccess=()=>r(q.result)});
+const tx=async(m,f)=>{const d=await dbp;return new Promise((res,rej)=>{const t=d.transaction('models',m);const r=f(t.objectStore('models'));t.oncomplete=()=>res(r.result);t.onerror=()=>rej(t.error)})};
+const mput=(k,v)=>tx('readwrite',o=>o.put(v,k)),mget=k=>tx('readonly',o=>o.get(k)),mdel=k=>tx('readwrite',o=>o.delete(k)),mkeys=()=>tx('readonly',o=>o.getAllKeys());
+const ls=(k,d)=>{try{return JSON.parse(localStorage.getItem('lu_'+k))??d}catch{return d}},sv=(k,v)=>localStorage.setItem('lu_'+k,JSON.stringify(v));
+let chats=ls('chats',[]),cur=null,servers=ls('mcp',[]),active=ls('active',null),att=[],W=null,busy=false;
+const save=()=>sv('chats',chats);
+function newChat(){cur={id:Date.now(),title:'Nova conversa',msgs:[]};chats.unshift(cur);render();$('#side').classList.remove('on')}
+function render(){
+  $('#ttl').textContent=cur.title;$('#chip').textContent=W?active:(active?active+' (tocar para carregar)':'Sem modelo');
+  $('#list').innerHTML='';chats.forEach(c=>{const b=document.createElement('button');b.className='ci'+(c===cur?' on':'');b.textContent=c.title;b.onclick=()=>{cur=c;render();$('#side').classList.remove('on')};b.oncontextmenu=e=>{e.preventDefault();if(confirm('Apagar conversa?')){chats=chats.filter(x=>x!==c);if(!chats.length)newChat();else cur=chats[0];save();render()}};$('#list').append(b)});
+  const w=$('#w');
+  if(!cur.msgs.length){w.innerHTML='<div id="empty"><img src="icon-512.png" alt=""><h1 class="serif">Como posso ajudar?</h1><p>Tudo roda no seu celular.</p></div>'}
+  else w.innerHTML=cur.msgs.filter(m=>!m.hide).map((m,i)=>`<div class="m ${m.role=='user'?'u':'a'}"><div class="b" data-i="${i}">${md(m.content||'…')}</div></div>`).join('');
+  $('#att').innerHTML=att.map((a,i)=>`<span class="at">${esc(a.name)} <a href="#" data-x="${i}" style="color:var(--mu)">✕</a></span>`).join('');
+  $('#msgs').scrollTop=1e9;
+}
+/* modelo (llama.cpp via WebAssembly) */
+const CDN='https://cdn.jsdelivr.net/npm/@wllama/wllama@2.3.1/esm/';
+async function loadModel(name){
+  if(!name)return;toast('Carregando '+name+'…');
+  try{
+    const blob=await mget(name);if(!blob)throw Error('Modelo não encontrado');
+    const {Wllama}=await import(CDN+'index.js');
+    if(W){try{await W.exit()}catch{}}
+    W=new Wllama({'single-thread/wllama.wasm':CDN+'single-thread/wllama.wasm','multi-thread/wllama.wasm':CDN+'multi-thread/wllama.wasm'});
+    await W.loadModel([new File([blob],name)],{n_ctx:4096});
+    active=name;sv('active',name);toast('Modelo pronto');
+  }catch(e){W=null;toast('Erro: '+e.message)}
+  render();
+}
+/* MCP (HTTP) */
+async function rpc(s,method,params,note){
+  const h={'Content-Type':'application/json','Accept':'application/json, text/event-stream'};
+  if(s.sid)h['Mcp-Session-Id']=s.sid;if(s.token)h.Authorization='Bearer '+s.token;
+  const r=await fetch(s.url,{method:'POST',headers:h,body:JSON.stringify(note?{jsonrpc:'2.0',method,params}:{jsonrpc:'2.0',id:Date.now(),method,params})});
+  const sid=r.headers.get('Mcp-Session-Id');if(sid)s.sid=sid;
+  if(note)return;if(!r.ok)throw Error('HTTP '+r.status);
+  const t=await r.text();let j;
+  if((r.headers.get('content-type')||'').includes('event-stream'))j=t.split('\n').filter(x=>x.startsWith('data:')).map(x=>JSON.parse(x.slice(5))).find(x=>x.result||x.error);
+  else j=JSON.parse(t);
+  if(j.error)throw Error(j.error.message);return j.result;
+}
+async function init(s){await rpc(s,'initialize',{protocolVersion:'2025-03-26',capabilities:{},clientInfo:{name:'Lumina',version:'1.0'}});await rpc(s,'notifications/initialized',{},1);s.ready=1}
+async function callTool(name,args){
+  const s=servers.find(s=>s.tools.some(t=>t.name==name));if(!s)throw Error('Ferramenta desconhecida: '+name);
+  if(!s.ready)await init(s);
+  const r=await rpc(s,'tools/call',{name,arguments:args});
+  return (r.content||[]).map(c=>c.text||'').join('\n')||JSON.stringify(r);
+}
+const toolPrompt=()=>{const t=servers.flatMap(s=>s.tools);return t.length?'\n\nFerramentas MCP disponíveis. Para usar uma, responda somente com um bloco ```tool {"name":"...","arguments":{...}}``` e aguarde o resultado.\n'+t.map(x=>`- ${x.name}: ${x.description||''} ${JSON.stringify(x.inputSchema?.properties||{})}`).join('\n'):''};
+/* conversa */
+async function run(depth=0){
+  const sys={role:'system',content:'Você é a Lumina, uma assistente clara e prestativa. Responda no idioma do usuário.'+toolPrompt()};
+  const m={role:'assistant',content:''};cur.msgs.push(m);render();
+  const el=()=>$('#w').querySelector('.m:last-child .b');
+  await W.createChatCompletion([sys,...cur.msgs.slice(0,-1).map(x=>({role:x.role,content:x.content}))],{nPredict:1024,sampling:{temp:.7},onNewToken:(t,p,text)=>{m.content=text;const e=el();if(e){e.innerHTML=md(text);$('#msgs').scrollTop=1e9}}});
+  save();
+  const mt=m.content.match(/```tool\s*([\s\S]*?)```/);
+  if(mt&&depth<3){
+    try{const j=JSON.parse(mt[1]);toast('Usando '+j.name);const out=await callTool(j.name,j.arguments||{});cur.msgs.push({role:'user',content:`[Resultado de ${j.name}]\n${out.slice(0,4000)}`,hide:1});await run(depth+1)}
+    catch(e){toast('MCP: '+e.message)}
+  }
+}
+async function send(){
+  if(busy)return;const text=$('#in').value.trim();if(!text&&!att.length)return;
+  if(!W){toast('Carregue um modelo em Modelos e MCP');return openCfg()}
+  let c=text;att.forEach(a=>c+=`\n\n[Arquivo: ${a.name}]\n\`\`\`\n${a.text.slice(0,8000)}\n\`\`\``);
+  if(cur.title=='Nova conversa')cur.title=(text||att[0].name).slice(0,40);
+  cur.msgs.push({role:'user',content:c});$('#in').value='';att=[];busy=true;
+  try{await run()}catch(e){toast('Erro: '+e.message)}
+  busy=false;save();render();
+}
+/* configurações */
+let tab='m';
+function openCfg(){$('#ov').classList.add('on');cfg()}
+async function cfg(){
+  const sh=$('#sheet');
+  let h=`<div class="tabs"><button data-t="m" class="${tab=='m'?'on':''}">Modelos</button><button data-t="c" class="${tab=='c'?'on':''}">MCP</button></div>`;
+  if(tab=='m'){
+    const ks=await mkeys();
+    h+=`<h3 class="serif">Instalados</h3>`+(ks.length?'':'<p class="mu">Nenhum modelo ainda.</p>');
+    for(const k of ks){const b=await mget(k);h+=`<div class="card"><div class="n">${esc(k)}<small>${fmt(b.size)}${k==active&&W?' · em uso':''}</small></div><button class="btn" data-use="${esc(k)}">Usar</button><button class="btn" data-del="${esc(k)}">✕</button></div>`}
+    h+=`<h3 class="serif">Dos arquivos do celular</h3><button class="btn" id="pick">Escolher arquivo .gguf</button>
+    <h3 class="serif">Do Hugging Face</h3><input class="f" id="q" placeholder="Buscar (ex.: qwen2.5 0.5b instruct)"><button class="btn" id="qs">Buscar</button><div id="res"></div>
+    <input class="f" id="url" placeholder="Ou cole o link do arquivo .gguf"><button class="btn" id="ug">Baixar link</button>
+    <div id="pg"><i></i></div><p class="mu" id="pt"></p>
+    <p class="mu">Dica: prefira modelos GGUF quantizados (Q4) de até 1,5 GB para rodar bem no celular.</p>`;
+  }else{
+    h+=`<h3 class="serif">Servidores</h3>`+(servers.length?'':'<p class="mu">Nenhum servidor conectado.</p>');
+    servers.forEach((s,i)=>h+=`<div class="card"><div class="n">${esc(s.name)}<small>${s.tools.length} ferramentas · ${esc(s.url)}</small></div><button class="btn" data-rm="${i}">✕</button></div>`);
+    h+=`<h3 class="serif">Conectar servidor MCP</h3><input class="f" id="mn" placeholder="Nome"><input class="f" id="mu" placeholder="URL (https://…/mcp)" inputmode="url"><input class="f" id="mt" placeholder="Token (opcional)"><button class="btn pri" id="mc">Conectar</button><p class="mu" id="ms"></p>`;
+  }
+  sh.innerHTML=h;
+}
+async function hfDownload(url,name){
+  try{
+    const r=await fetch(url);if(!r.ok)throw Error('HTTP '+r.status);
+    const tot=+r.headers.get('content-length')||0,rd=r.body.getReader(),ch=[];let n=0;$('#pg').style.display='block';
+    for(;;){const {done,value}=await rd.read();if(done)break;ch.push(value);n+=value.length;$('#pg i').style.width=(tot?n/tot*100:50)+'%';$('#pt').textContent=fmt(n)+(tot?' / '+fmt(tot):'')}
+    await mput(name,new Blob(ch));toast('Modelo instalado');cfg();
+  }catch(e){toast('Erro: '+e.message)}
+}
+$('#sheet').addEventListener('click',async e=>{
+  const t=e.target,d=t.dataset||{};
+  if(d.t){tab=d.t;cfg()}
+  else if(d.use){$('#ov').classList.remove('on');loadModel(d.use)}
+  else if(d.del){if(confirm('Apagar modelo?')){await mdel(d.del);if(active==d.del){active=null;W=null;sv('active',null)}cfg();render()}}
+  else if(d.rm){servers.splice(+d.rm,1);sv('mcp',servers);cfg()}
+  else if(d.dl){hfDownload(`https://huggingface.co/${d.repo}/resolve/main/${d.dl}`,d.dl.split('/').pop())}
+  else if(d.repo&&!d.dl){
+    t.disabled=true;const r=await (await fetch(`https://huggingface.co/api/models/${d.repo}?blobs=true`)).json();
+    const fs=(r.siblings||[]).filter(s=>s.rfilename.endsWith('.gguf'));
+    t.parentElement.insertAdjacentHTML('afterend',fs.map(f=>`<div class="card"><div class="n">${esc(f.rfilename)}<small>${f.size?fmt(f.size):''}</small></div><button class="btn" data-repo="${esc(d.repo)}" data-dl="${esc(f.rfilename)}">Baixar</button></div>`).join('')||'<p class="mu">Sem arquivos GGUF neste repositório.</p>');
+  }
+  else if(t.id=='pick')$('#fm').click();
+  else if(t.id=='qs'){
+    $('#res').innerHTML='<p class="mu">Buscando…</p>';
+    try{const l=await (await fetch('https://huggingface.co/api/models?filter=gguf&limit=12&sort=downloads&search='+encodeURIComponent($('#q').value))).json();
+      $('#res').innerHTML=l.map(m=>`<div class="card"><div class="n">${esc(m.id)}<small>${m.downloads||0} downloads</small></div><button class="btn" data-repo="${esc(m.id)}">Arquivos</button></div>`).join('')||'<p class="mu">Nada encontrado.</p>'}
+    catch(e){$('#res').innerHTML='<p class="mu">Erro: '+esc(e.message)+'</p>'}
+  }
+  else if(t.id=='ug'){let u=$('#url').value.trim().replace('/blob/','/resolve/');if(u)hfDownload(u,decodeURIComponent(u.split('?')[0].split('/').pop()))}
+  else if(t.id=='mc'){
+    const s={name:$('#mn').value.trim()||'MCP',url:$('#mu').value.trim(),token:$('#mt').value.trim(),tools:[]};
+    $('#ms').textContent='Conectando…';
+    try{await init(s);s.tools=(await rpc(s,'tools/list',{})).tools||[];servers.push(s);sv('mcp',servers.map(({ready,sid,...r})=>r));cfg();toast(s.tools.length+' ferramentas')}
+    catch(e){$('#ms').textContent='Erro: '+e.message+' (o servidor precisa liberar CORS)'}
+  }
+});
+$('#fm').onchange=async e=>{const f=e.target.files[0];if(!f)return;await mput(f.name,f);e.target.value='';toast('Modelo adicionado');cfg()};
+$('#fa').onchange=async e=>{for(const f of e.target.files){try{att.push({name:f.name,text:await f.text()})}catch{}}e.target.value='';render()};
+$('#ov').onclick=e=>{if(e.target.id=='ov')$('#ov').classList.remove('on')};
+$('#att').onclick=e=>{const x=e.target.dataset.x;if(x!=null){e.preventDefault();att.splice(+x,1);render()}};
+$('#plus').onclick=()=>$('#fa').click();$('#send').onclick=send;$('#new').onclick=newChat;$('#cfg').onclick=openCfg;
+$('#chip').onclick=()=>{if(active&&!W)loadModel(active);else openCfg()};
+$('#menu').onclick=()=>$('#side').classList.toggle('on');
+$('#in').addEventListener('input',e=>{e.target.style.height='auto';e.target.style.height=e.target.scrollHeight+'px'});
+$('#in').addEventListener('keydown',e=>{if(e.key=='Enter'&&!e.shiftKey&&innerWidth>760){e.preventDefault();send()}});
+if(chats.length)cur=chats[0];else newChat();
+render();
+if('serviceWorker'in navigator)navigator.serviceWorker.register('sw.js');
+</script>
+</body>
+</html>
