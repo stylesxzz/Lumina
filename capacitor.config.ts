@@ -1,8 +1,8 @@
 import type { CapacitorConfig } from "@capacitor/cli";
 
 const config: CapacitorConfig = {
-  appId: "app.lumina.studio",
-  appName: "Lumina Studio",
+  appId: "app.luminous.ai",
+  appName: "Luminous",
   webDir: "dist/public",
   android: {
     backgroundColor: "#0b0b10",
