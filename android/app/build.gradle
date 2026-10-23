@@ -6,7 +6,16 @@ apply plugin: "com.facebook.react"
 // Add the Google Services plugin dependency
 // This is used exclusively for sending benchmarks (with user consent) to Hugging Face Spaces via Firebase.
 // Firebase is used for App Check functionality, allowing unauthenticated users to submit their benchmark data securely.
-apply plugin: "com.google.gms.google-services"
+// Firebase configuration is optional for community builds. The Google Services
+// plugin fails the entire Android build when google-services.json is not provided.
+if (file("google-services.json").exists() ||
+    file("src/prod/google-services.json").exists() ||
+    file("src/debug/google-services.json").exists() ||
+    file("src/prodDebug/google-services.json").exists()) {
+    apply plugin: "com.google.gms.google-services"
+} else {
+    logger.lifecycle("google-services.json not found; skipping optional Google Services configuration.")
+}
 
 apply from: "../../node_modules/react-native-config/android/dotenv.gradle"
 
