@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">Lumina Studio</string>
-    <string name="title_activity_main">Lumina Studio</string>
+    <string name="app_name">Luminous</string>
+    <string name="title_activity_main">Luminous</string>
     <string name="package_name">app.lumina.studio</string>
     <string name="custom_url_scheme">app.lumina.studio</string>
 </resources>
