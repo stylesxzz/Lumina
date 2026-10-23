@@ -131,8 +131,7 @@ export default function Home() {
     setModel(repoId);
     setProvider("local");
     setPanel(null);
-    addMessage({ id: Date.now(), role: "system", content: "Modelo selecionado: " + repoId + ". Selecionar um repositório não baixa os pesos nem habilita inferência offline; esta versão Android ainda precisa de um runtime local compatível para executar modelos.", time: now(), kind: "install" });
-    try { window.open("https://huggingface.co/" + repoId, "_blank", "noopener,noreferrer"); } catch { /* WebView may block popups */ }
+    addMessage({ id: Date.now(), role: "system", content: "Modelo selecionado: " + repoId + ". A busca no catálogo funciona, mas o download dos pesos e a inferência offline ainda dependem da integração nativa do runtime Android. O Lumina não marcará este modelo como instalado até essa integração existir.", time: now(), kind: "install" });
   };
 
   const searchHuggingFace = async () => {
@@ -188,8 +187,7 @@ export default function Home() {
         if (!response.ok) throw new Error(payload.error?.message || payload.error || ("OpenRouter respondeu HTTP " + response.status));
         content = payload.choices?.[0]?.message?.content || "O modelo não retornou texto.";
       } else {
-        await new Promise((resolve) => window.setTimeout(resolve, 560));
-        content = localReply(text);
+        throw new Error("A inferência local real ainda não está integrada nesta versão. Para receber respostas agora, selecione OpenRouter em Conexões e configure sua chave. O modo local não gerará respostas simuladas.");
       }
       setMessages((current) => current.map((item) => item.id === pendingId ? { ...item, content, pending: false, time: now() } : item));
     } catch (error) {
