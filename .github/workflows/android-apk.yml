@@ -1,48 +1,55 @@
-name: Android APK
+name: Lumina Android APK
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
-  workflow_dispatch:
 
 permissions:
   contents: read
 
+env:
+  NODE_VERSION: '22.21.0'
+
 jobs:
   build-apk:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10.18.0
+          node-version: ${{ env.NODE_VERSION }}
+          cache: yarn
+
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 21
+          java-version: '17'
+
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
-        with:
-          packages: 'platform-tools platforms;android-36 build-tools;36.0.0'
+
+      - name: Install Yarn
+        run: corepack enable && corepack prepare yarn@1.22.22 --activate
+
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-      - name: Build web assets
-        run: pnpm build:static
-      - name: Sync Capacitor
-        run: pnpm exec cap sync android
-      - name: Build debug APK
-        working-directory: android
-        run: bash gradlew assembleDebug --no-daemon
-      - name: Upload APK
+        run: yarn install --frozen-lockfile
+        env:
+          RNLLAMA_SKIP_POSTINSTALL: '0'
+
+      - name: Build Android APK
+        run: yarn build:android
+        env:
+          ORG_GRADLE_PROJECT_rnllamaBuildFromSource: 'false'
+
+      - name: Upload Lumina APK
         uses: actions/upload-artifact@v4
         with:
-          name: lumina-debug-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          name: lumina-apk
+          path: android/app/build/outputs/apk/prodDebug/app-prod-debug.apk
           if-no-files-found: error

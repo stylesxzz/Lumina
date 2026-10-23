@@ -1,27 +1,33 @@
 # Lumina
 
-Copiloto local-first gratuito para desenvolvimento seguro, cybersecurity defensiva e pentest autorizado. A interface alterna entre os perfis DEV e SEC, permite escolher runtime local ou OpenRouter, buscar modelos no Hugging Face, ativar Skills e conectar servidores MCP com escopo e aprovação humana.
+Lumina é uma reconstrução React Native baseada no APK de referência enviado pelo projeto. A interface e a dinâmica principal permanecem as do app de referência: chat, histórico, modelos locais GGUF, busca e download de modelos, carregamento, streaming, multimodalidade e configurações de inferência.
 
-## Desenvolvimento web
+A base usa `llama.rn` para inferência local e mantém o fluxo de modelos do APK original. O endpoint remoto gerenciado é o OpenRouter, compatível com a API OpenAI. A chave é armazenada no Keychain do dispositivo e não no banco de dados da aplicação.
 
-```bash
-pnpm install
-pnpm dev
-```
+## Cybersecurity e pentest autorizado
 
-`pnpm check` valida os tipos. `pnpm build` gera o servidor e o frontend. `pnpm build:static` gera somente os assets web usados pelo Android.
+A identidade Lumina adiciona uma política de cybersecurity ao system prompt padrão e um catálogo inicial de Skills para inventário de ativos, análise de superfície, validação não destrutiva de vulnerabilidades, threat modeling e hardening. Ações que toquem ambientes reais exigem escopo, proprietário, referência de autorização, alvos, exclusões e janela de teste ativa.
 
-O endpoint server-side do OpenRouter usa `OPENROUTER_API_KEY`. O Hugging Face é pesquisável sem token para modelos públicos; `HUGGINGFACE_TOKEN` pode ser configurado para repositórios privados. Nenhuma chave é embutida no frontend.
+O cliente MCP incluído expõe descoberta e execução de ferramentas por JSON-RPC. Uma chamada MCP só é aceita quando a aprovação humana corresponde ao servidor e à ferramenta solicitada. O aplicativo deve ser usado somente em ambientes próprios ou explicitamente autorizados.
 
-## APK Android
+## Desenvolvimento
 
-O projeto usa Capacitor. Para preparar os assets e sincronizar a plataforma Android localmente:
+A base requer Node 22.21.0 ou superior, Yarn 1.22.22, Java 17 e Android SDK/NDK. Para instalar as dependências e validar o projeto:
 
 ```bash
-pnpm build:static
-pnpm exec cap sync android
+yarn install
+yarn typecheck
+yarn test --runInBand
 ```
 
-O workflow `.github/workflows/android-apk.yml` roda no GitHub Actions a cada push em `main`, instala Node, pnpm, Java e Android SDK, compila `app-debug.apk` e publica o arquivo como artefato `lumina-debug-apk` na execução do workflow.
+Para gerar o APK Android:
 
-O APK contém o frontend e o fallback local. Para usar OpenRouter e instalações Hugging Face dentro do APK, a aplicação deve apontar para um backend publicado que mantenha as chaves no servidor; o Preview web continua sendo a superfície completa server-side.
+```bash
+yarn build:android
+```
+
+O workflow `.github/workflows/android-apk.yml` compila automaticamente o artefato `lumina-apk` no GitHub Actions.
+
+## Fontes
+
+A base React Native foi reconstruída a partir do [PocketPal AI](https://github.com/a-ghorbani/pocketpal-ai), publicado sob licença MIT. O binding local de inferência é o [llama.rn](https://github.com/mybigday/llama.rn), também sob MIT.

@@ -1,113 +1,114 @@
-# Dependencies
-**/node_modules
-.pnpm-store/
-
-# Build outputs
-dist/
-build/
-*.dist
-
-# Environment variables
-.env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
-
-# IDE and editor files
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# OS generated files
+# OSX
+#
 .DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
 
-# Logs
-logs
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-lerna-debug.log*
+# Xcode
+#
+build/
+*.pbxuser
+!default.pbxuser
+*.mode1v3
+!default.mode1v3
+*.mode2v3
+!default.mode2v3
+*.perspectivev3
+!default.perspectivev3
+xcuserdata
+*.xccheckout
+*.moved-aside
+DerivedData
+*.hmap
+*.ipa
+*.xcuserstate
+**/.xcode.env.local
+ios/dist
 
-# Runtime data
-pids
-*.pid
-*.seed
-*.pid.lock
-*.bak
+# Android/IntelliJ
+#
+build/
+.idea
+.gradle
+local.properties
+*.iml
+*.hprof
+.cxx/
+*.keystore
+!debug.keystore
+.kotlin/
 
-# Coverage directory used by tools like istanbul
-coverage/
-*.lcov
+# node.js
+#
+node_modules/
+npm-debug.log
+yarn-error.log
+package-lock.json
+.yarn
 
-# nyc test coverage
-.nyc_output
+# fastlane
+#
+# It is recommended to not store the screenshots in the git repo. Instead, use fastlane to re-generate the
+# screenshots whenever they are needed.
+# For more information about the recommended setup visit:
+# https://docs.fastlane.tools/best-practices/source-control/
 
-# Dependency directories
-jspm_packages/
+**/fastlane/report.xml
+**/fastlane/Preview.html
+**/fastlane/screenshots
+**/fastlane/test_output
 
-# TypeScript cache
-*.tsbuildinfo
+# Bundle artifact
+*.jsbundle
 
-# Optional npm cache directory
-.npm
+# Ruby / CocoaPods
+**/Pods/
+/vendor/bundle/
 
-# Optional eslint cache
-.eslintcache
+# Temporary files created by Metro to check the health of the file watcher
+.metro-health-check*
 
-# Microbundle cache
-.rpt2_cache/
-.rts2_cache_cjs/
-.rts2_cache_es/
-.rts2_cache_umd/
+# testing
+/coverage
+.reassure/
+.env
 
-# Optional REPL history
-.node_repl_history
+# Firebase config files (prod + all flavor-specific overrides)
+android/app/**/google-services.json
+ios/GoogleService-Info.plist
 
-# Output of 'npm pack'
-*.tgz
+# Environment files
+.env
+.env.*
+!.env.example
 
-# Yarn Integrity file
-.yarn-integrity
+# environment config
+ios/Config/Env.xcconfig
 
-# parcel-bundler cache (https://parceljs.org/)
-.cache
-.parcel-cache
+# Android native libraries (should not be committed)
+**/libggml-htp*.so
 
-# Next.js build output
-.next
+# E2E debug output
+e2e/debug-output/
+e2e/device-farm-artifacts/
+e2e/test-package.zip
+e2e/testspec-*-allmodels.yml
 
-# Nuxt.js build / generate output
-.nuxt
+# E2E pipeline
+e2e/devices.json
+e2e/reports/
+e2e/dist/
 
-# Gatsby files
-.cache/
+# Per-task one-shot visual-capture specs. Authored in the worktree for a
+# single PR review (pre/post diff against main), never committed. They die
+# with the worktree.
+e2e/specs/visual-capture/TASK-*.spec.ts
 
-# Storybook build outputs
-.out
-.storybook-out
+# Android build log and payload-check report, written by both the CI and
+# release workflows and reproducible locally. The build log can contain the
+# gradle command line, so it is never committed.
+android/android-build.log
+/payload-report.txt
 
-# Temporary folders
-tmp/
-temp/
-
-# Database
-*.db
-*.sqlite
-*.sqlite3
-
-# Webdev artifacts (checkpoint zips, migrations, etc.)
-.webdev/
-
-# Manus version file (auto-generated, not part of source)
-client/public/__manus__/version.json
+# Dev-team workflow control-plane artefacts (story docs, designer asks,
+# screenshot inventories). Live in the dev-team repo and are sometimes
+# synced into the worktree for local reference; never committed here.
+workflows/
