@@ -1,6 +1,6 @@
-# Lumina Studio
+# Lumina
 
-Studio local-first gratuito para programação, desenvolvimento e cibersegurança defensiva. A interface alterna entre os perfis DEV e SEC, permite escolher runtime local ou OpenRouter, buscar modelos no Hugging Face, ativar Skills e conectar servidores MCP.
+Copiloto local-first gratuito para desenvolvimento seguro, cybersecurity defensiva e pentest autorizado. A interface alterna entre os perfis DEV e SEC, permite escolher runtime local ou OpenRouter, buscar modelos no Hugging Face, ativar Skills e conectar servidores MCP com escopo e aprovação humana.
 
 ## Desenvolvimento web
 
@@ -22,6 +22,6 @@ pnpm build:static
 pnpm exec cap sync android
 ```
 
-O workflow `.github/workflows/android-apk.yml` roda no GitHub Actions a cada push em `main`, instala Node, pnpm, Java e Android SDK, compila `app-debug.apk` e publica o arquivo como artefato `lumina-studio-debug-apk` na execução do workflow.
+O workflow `.github/workflows/android-apk.yml` roda no GitHub Actions a cada push em `main`, instala Node, pnpm, Java e Android SDK, compila `app-debug.apk` e publica o arquivo como artefato `lumina-debug-apk` na execução do workflow.
 
 O APK contém o frontend e o fallback local. Para usar OpenRouter e instalações Hugging Face dentro do APK, a aplicação deve apontar para um backend publicado que mantenha as chaves no servidor; o Preview web continua sendo a superfície completa server-side.

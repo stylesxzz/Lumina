@@ -1,3 +1,3 @@
 export default {
-  logoUrl: "https://placehold.co/128x128/17141f/9a7cff.png?text=L",
+  logoUrl: "https://raw.githubusercontent.com/stylesxzz/Lumina/main/client/public/lumina-icon.jpg",
 };

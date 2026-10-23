@@ -1,7 +1,7 @@
-# Lumina Studio — plano atualizado
+# Lumina — plano atualizado
 
 ## Objetivo
-Transformar o Lumina em um studio gratuito e local-first para desenvolvimento. O produto não terá planos pagos. A tela principal deve alternar, no topo, entre duas IAs especializadas: Programação & Desenvolvimento e Cibersegurança & Defesa.
+Transformar o Lumina em um copiloto gratuito e local-first para desenvolvimento seguro e cybersecurity. O produto não terá planos pagos. A tela principal alterna entre Programação & Desenvolvimento e Cibersegurança & Defesa, incluindo pentest apenas quando houver escopo declarado, autorização e confirmação humana.
 
 ## Capacidades
 O chat usa um runtime local com fallback funcional, pode chamar o endpoint compatível com OpenAI do OpenRouter quando `OPENROUTER_API_KEY` estiver configurada e pode buscar/preparar modelos do Hugging Face por `repo_id`. O app também expõe Skills reutilizáveis e servidores MCP conectados para ferramentas e dados externos.
@@ -11,8 +11,8 @@ O chat usa um runtime local com fallback funcional, pode chamar o endpoint compa
 - O painel Modelos Locais busca o catálogo público do Hugging Face e inicia a instalação de um repositório.
 - A seleção Local/OpenRouter fica no composer, com o modelo atual sempre visível.
 - OpenRouter usa o endpoint `/api/v1/chat/completions` no servidor, sem expor a chave no navegador.
-- O painel MCP permite adicionar endpoints e mostra servidores conectados.
-- Skills ativas aparecem como instruções especializadas de programação, defesa, Git e terminal seguro.
+- O painel MCP permite adicionar endpoints e mostra servidores conectados; ações ativas exigem aprovação.
+- Skills ativas aparecem como instruções especializadas de programação, defesa, pentest autorizado, Git e terminal seguro.
 
 ## Design
 A estética é um cockpit calmo de engenharia: grafite quase preto, violeta Lumina para desenvolvimento, verde esmeralda para defesa e chips de estado para indicar runtime, MCP e conexão. A navegação usa sidebar compacta no desktop e gaveta no mobile. O topo concentra o interruptor DEV/SEC para tornar a especialização explícita em todos os momentos.
