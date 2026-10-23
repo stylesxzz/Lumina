@@ -36,7 +36,18 @@ type Profile = "dev" | "security";
 type Provider = "local" | "openrouter";
 type Panel = "models" | "skills" | "mcp" | "connections" | null;
 type Message = { id: number; role: "user" | "assistant" | "system"; content: string; time: string; kind?: "install" | "tool"; pending?: boolean };
-type Model = { id: string; name: string; author: string; downloads?: number; pipeline_tag?: string; installed?: boolean };
+type Model = { id: string; name: string; author: string; downloads?: number; pipeline_tag?: string; installed?: boolean; context_length?: number; description?: string; pricing?: { prompt?: string; completion?: string } };
+
+async function readJsonResponse(response: Response): Promise<any> {
+  const contentType = response.headers.get("content-type") || "";
+  const raw = await response.text();
+  if (!contentType.toLowerCase().includes("json")) {
+    throw new Error(raw.trim().startsWith("<!doctype") || raw.trim().startsWith("<html")
+      ? "O servidor retornou HTML em vez de JSON. A rota da API não está disponível neste APK."
+      : "Resposta inesperada do servidor (HTTP " + response.status + ").");
+  }
+  try { return JSON.parse(raw); } catch { throw new Error("A resposta da API contém JSON inválido."); }
+}
 
 const now = () => new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit" }).format(new Date());
 const formatDownloads = (value?: number) => !value ? "—" : value > 1000000 ? `${(value / 1000000).toFixed(1)}M` : value > 1000 ? `${Math.round(value / 1000)}k` : String(value);
@@ -82,6 +93,8 @@ export default function Home() {
   const [installing, setInstalling] = useState<string | null>(null);
   const [mcpUrl, setMcpUrl] = useState("");
   const [mcpServers, setMcpServers] = useState<string[]>(["filesystem · local", "git-tools · local"]);
+  const [openRouterModels, setOpenRouterModels] = useState<Model[]>([]);
+  const [apiKey, setApiKey] = useState(() => { try { return window.localStorage.getItem("lumina.openrouter.key") || ""; } catch { return ""; } });
   const [openRouterReady, setOpenRouterReady] = useState(false);
   const [hfReady, setHfReady] = useState(false);
   const [copiedId, setCopiedId] = useState<number | null>(null);
@@ -91,15 +104,17 @@ export default function Home() {
   const t = profileCopy[profile];
 
   useEffect(() => {
-    fetch("/api/ai/status").then((response) => response.json()).then((status) => { setOpenRouterReady(Boolean(status.openRouterConfigured)); setHfReady(Boolean(status.huggingFaceConfigured)); }).catch(() => undefined);
-  }, []);
+    setOpenRouterReady(Boolean(apiKey));
+    fetch("/api/ai/status").then(readJsonResponse).then((status) => { setOpenRouterReady(Boolean(apiKey) || Boolean(status.openRouterConfigured)); setHfReady(Boolean(status.huggingFaceConfigured)); }).catch(() => undefined);
+  }, [apiKey]);
 
   useEffect(() => { composerRef.current?.focus(); }, [profile]);
 
   const visibleModels = useMemo(() => {
     const query = search.trim().toLowerCase();
-    return query ? hfModels.filter((item) => `${item.id} ${item.name}`.toLowerCase().includes(query)) : hfModels;
-  }, [hfModels, search]);
+    const source = provider === "openrouter" ? openRouterModels : hfModels;
+    return query ? source.filter((item) => (item.id + " " + item.name + " " + item.author).toLowerCase().includes(query)) : source;
+  }, [hfModels, openRouterModels, search, provider]);
 
   const localReply = (text: string) => {
     const lower = text.toLowerCase();
@@ -113,27 +128,43 @@ export default function Home() {
   const addMessage = (message: Message) => setMessages((current) => [...current, message]);
 
   const installModel = async (repoId: string) => {
-    setInstalling(repoId);
-    const pendingId = Date.now();
-    addMessage({ id: pendingId, role: "system", content: `Instalando ${repoId} a partir do Hugging Face…`, time: now(), kind: "install", pending: true });
-    try {
-      const response = await fetch("/api/huggingface/install", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repoId }) });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error || "Falha ao instalar");
-      setInstalled((current) => [...new Set([...current, repoId])]);
-      setMessages((current) => current.map((item) => item.id === pendingId ? { ...item, content: `Modelo preparado: ${repoId}. ${payload.downloaded?.length ?? 0} arquivos de configuração foram baixados para o runtime local.`, pending: false } : item));
-    } catch (error) {
-      setMessages((current) => current.map((item) => item.id === pendingId ? { ...item, content: `Não consegui instalar agora. ${error instanceof Error ? error.message : "Verifique a conexão com o Hugging Face."}`, pending: false } : item));
-    } finally { setInstalling(null); }
+    setModel(repoId);
+    setProvider("local");
+    setPanel(null);
+    addMessage({ id: Date.now(), role: "system", content: "Modelo selecionado: " + repoId + ". Selecionar um repositório não baixa os pesos nem habilita inferência offline; esta versão Android ainda precisa de um runtime local compatível para executar modelos.", time: now(), kind: "install" });
+    try { window.open("https://huggingface.co/" + repoId, "_blank", "noopener,noreferrer"); } catch { /* WebView may block popups */ }
   };
 
   const searchHuggingFace = async () => {
-    if (!search.trim()) return;
     try {
-      const response = await fetch(`/api/huggingface/models?search=${encodeURIComponent(search)}`);
-      const payload = await response.json();
-      if (response.ok && Array.isArray(payload.models)) setHfModels(payload.models.map((item: Model) => ({ ...item, name: item.id.split("/").pop() || item.id, author: item.id.split("/")[0] })));
-    } catch { /* keep local catalog */ }
+      const query = search.trim();
+      const url = "https://huggingface.co/api/models?" + (query ? "search=" + encodeURIComponent(query) + "&" : "") + "sort=downloads&direction=-1&limit=100&full=true";
+      const response = await fetch(url, { headers: { Accept: "application/json" } });
+      const payload = await readJsonResponse(response);
+      if (!response.ok) throw new Error(payload.error || ("Hugging Face respondeu HTTP " + response.status));
+      if (!Array.isArray(payload)) throw new Error("Formato inesperado na busca do Hugging Face.");
+      setHfModels(payload.map((item: any) => ({ id: item.id, name: item.id?.split("/").pop() || item.id, author: item.id?.split("/")[0] || "Hugging Face", downloads: item.downloads, pipeline_tag: item.pipeline_tag, description: item.cardData?.description } as Model)));
+    } catch (error) {
+      addMessage({ id: Date.now(), role: "system", content: "Falha na busca do Hugging Face: " + (error instanceof Error ? error.message : "erro desconhecido"), time: now() });
+    }
+  };
+
+  const searchOpenRouter = async () => {
+    try {
+      const response = await fetch("https://openrouter.ai/api/v1/models", { headers: { Accept: "application/json" } });
+      const payload = await readJsonResponse(response);
+      if (!response.ok) throw new Error(payload.error?.message || ("OpenRouter respondeu HTTP " + response.status));
+      const models = Array.isArray(payload.data) ? payload.data : [];
+      setOpenRouterModels(models.map((item: any) => ({ id: item.id, name: item.name || item.id, author: item.id?.split("/")[0] || "OpenRouter", context_length: item.context_length, description: item.description, pricing: item.pricing })));
+    } catch (error) {
+      addMessage({ id: Date.now(), role: "system", content: "Falha ao buscar modelos do OpenRouter: " + (error instanceof Error ? error.message : "erro desconhecido"), time: now() });
+    }
+  };
+
+  const saveApiKey = (value: string) => {
+    setApiKey(value);
+    setOpenRouterReady(Boolean(value.trim()));
+    try { if (value.trim()) window.localStorage.setItem("lumina.openrouter.key", value.trim()); else window.localStorage.removeItem("lumina.openrouter.key"); } catch { /* storage may be disabled */ }
   };
 
   const send = async (value = draft) => {
@@ -148,11 +179,12 @@ export default function Home() {
     addMessage({ id: pendingId, role: "assistant", content: "", time: now(), pending: true });
     try {
       let content = "";
-      if (provider === "openrouter" && openRouterReady) {
-        const response = await fetch("/api/openrouter/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model, messages: [{ role: "system", content: t.system }, ...messages.filter((item) => item.role !== "system").slice(-10).map((item) => ({ role: item.role, content: item.content })), { role: "user", content: text }] }) });
-        const payload = await response.json();
-        if (!response.ok) throw new Error(payload.error || "OpenRouter indisponível");
-        content = payload.content;
+      if (provider === "openrouter") {
+        if (!apiKey.trim()) throw new Error("Configure sua chave de API do OpenRouter em Conexões antes de enviar mensagens.");
+        const response = await fetch("https://openrouter.ai/api/v1/chat/completions", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey.trim(), "HTTP-Referer": window.location.origin, "X-OpenRouter-Title": "Lumina Studio" }, body: JSON.stringify({ model, messages: [{ role: "system", content: t.system }, ...messages.filter((item) => item.role !== "system").slice(-10).map((item) => ({ role: item.role, content: item.content })), { role: "user", content: text }] }) });
+        const payload = await readJsonResponse(response);
+        if (!response.ok) throw new Error(payload.error?.message || payload.error || ("OpenRouter respondeu HTTP " + response.status));
+        content = payload.choices?.[0]?.message?.content || "O modelo não retornou texto.";
       } else {
         await new Promise((resolve) => window.setTimeout(resolve, 560));
         content = localReply(text);
@@ -185,7 +217,7 @@ export default function Home() {
     <main className="main-panel">
       <header className="topbar studio-topbar"><button className="mobile-menu-button" onClick={() => setMobileMenu(true)}><Menu size={20} /></button><div className="workspace-switcher"><button className={profile === "dev" ? "workspace-active workspace-dev" : ""} onClick={() => setProfile("dev")}><Code2 size={15} /><span>DEV</span><small>Programação</small></button><button className={profile === "security" ? "workspace-active workspace-sec" : ""} onClick={() => setProfile("security")}><ShieldCheck size={15} /><span>SEC</span><small>Cibersegurança</small></button></div><div className="topbar-tools"><span className="free-pill"><span className="live-dot" /> local-first</span><button className="icon-button" onClick={() => setPanel("connections")} title="Conexões"><Link2 size={17} /></button><button className="icon-button" onClick={() => setPanel("mcp")} title="MCP"><Network size={17} /></button></div></header>
       <div className="studio-body">
-        {panel ? <PanelView panel={panel} profile={profile} search={search} setSearch={setSearch} visibleModels={visibleModels} hfReady={hfReady} installed={installed} installing={installing} installModel={installModel} searchHuggingFace={searchHuggingFace} openRouterReady={openRouterReady} mcpUrl={mcpUrl} setMcpUrl={setMcpUrl} mcpServers={mcpServers} connectMcp={connectMcp} setPanel={setPanel} /> : <section className={`conversation ${messages.length ? "conversation-active" : ""}`}>
+        {panel ? <PanelView panel={panel} profile={profile} provider={provider} setProvider={setProvider} model={model} setModel={setModel} search={search} setSearch={setSearch} visibleModels={visibleModels} hfReady={hfReady} installed={installed} installing={installing} installModel={installModel} searchHuggingFace={searchHuggingFace} searchOpenRouter={searchOpenRouter} openRouterReady={openRouterReady} apiKey={apiKey} saveApiKey={saveApiKey} mcpUrl={mcpUrl} setMcpUrl={setMcpUrl} mcpServers={mcpServers} connectMcp={connectMcp} setPanel={setPanel} /> : <section className={`conversation ${messages.length ? "conversation-active" : ""}`}>
           {!messages.length ? <div className="welcome-state studio-welcome"><div className="welcome-orbit"><div className="orbit orbit-one" /><div className="orbit orbit-two" /><div className={`welcome-mark ${profile === "security" ? "security-mark" : ""}`}>{profile === "security" ? <ShieldCheck size={30} /> : <Code2 size={30} />}</div></div><p className={`eyebrow ${profile === "security" ? "security-eyebrow" : ""}`}>{t.label}</p><h1>{t.title}</h1><p className="welcome-copy">{t.subtitle}</p><div className="mode-pills"><span><span className="live-dot" /> Modelo: {provider === "local" ? "local" : "OpenRouter"}</span><span><Network size={12} /> {mcpServers.length} MCP conectados</span><span><Wrench size={12} /> Skills disponíveis</span></div><div className="starter-actions"><button className="starter-card" onClick={() => setPanel("models")}><span className="starter-icon"><Download size={18} /></span><span className="starter-card-copy"><strong>Instalar modelo local</strong><small>Hugging Face direto no chat</small></span><ArrowUp size={15} className="starter-arrow" /></button><button className="starter-card" onClick={() => setPanel("connections")}><span className="starter-icon"><Globe2 size={18} /></span><span className="starter-card-copy"><strong>Conectar OpenRouter</strong><small>Use qualquer modelo da API</small></span><ArrowUp size={15} className="starter-arrow" /></button><button className="starter-card" onClick={() => setPanel("mcp")}><span className="starter-icon"><Network size={18} /></span><span className="starter-card-copy"><strong>Adicionar MCP</strong><small>Ferramentas e dados externos</small></span><ArrowUp size={15} className="starter-arrow" /></button></div></div> : <div className="messages-wrap"><div className="conversation-heading"><div><span className="eyebrow">Sessão {t.short} · {provider === "local" ? "Runtime local" : "OpenRouter"}</span><h2>{t.label}</h2></div><button className="quiet-action" onClick={clearChat}><Plus size={15} /> Nova sessão</button></div><div className="messages-list">{messages.map((message) => <article key={message.id} className={`message-row message-${message.role}`}><div className={`message-avatar ${message.role === "assistant" ? "assistant-avatar" : message.role === "system" ? "system-avatar" : "user-avatar"}`}>{message.role === "assistant" ? <BrandMark /> : message.role === "system" ? <Download size={14} /> : "LS"}</div><div className="message-content"><div className="message-meta"><strong>{message.role === "assistant" ? (provider === "local" ? "Local AI" : "OpenRouter") : message.role === "system" ? "Runtime" : "Você"}</strong><span>{message.time}</span></div>{message.pending ? <div className="typing-bubble"><span /><span /><span /></div> : <p className="message-text">{message.content}</p>}{message.role === "user" && <div className="message-actions"><button onClick={() => copyMessage(message)}>{copiedId === message.id ? <Check size={13} /> : <Copy size={13} />} {copiedId === message.id ? "Copiado" : "Copiar"}</button><button onClick={() => { setDraft(message.content); composerRef.current?.focus(); }}><RotateCcw size={13} /> Reusar</button></div>}</div></article>)}</div></div>}
         </section>}
       </div>
@@ -194,12 +226,12 @@ export default function Home() {
   </div>;
 }
 
-function PanelView(props: { panel: Exclude<Panel, null>; profile: Profile; search: string; setSearch: (value: string) => void; visibleModels: Model[]; hfReady: boolean; installed: string[]; installing: string | null; installModel: (repoId: string) => Promise<void>; searchHuggingFace: () => Promise<void>; openRouterReady: boolean; mcpUrl: string; setMcpUrl: (value: string) => void; mcpServers: string[]; connectMcp: () => void; setPanel: (panel: Panel) => void }) {
-  const { panel, search, setSearch, visibleModels, hfReady, installed, installing, installModel, searchHuggingFace, openRouterReady, mcpUrl, setMcpUrl, mcpServers, connectMcp, setPanel } = props;
-  if (panel === "models") return <section className="control-panel"><PanelHeader icon={<Download size={19} />} eyebrow="Hugging Face Hub" title="Modelos locais" description="Busque repositórios e prepare modelos para o runtime local diretamente nesta conversa." onClose={() => setPanel(null)} /><div className="panel-callout"><Laptop size={16} /><span><strong>Instalação local</strong><small>Metadados e arquivos essenciais são baixados para a pasta de modelos do projeto. Pesos grandes dependem do runtime escolhido.</small></span><span className={hfReady ? "status-good" : "status-muted"}>{hfReady ? "token ativo" : "públicos"}</span></div><div className="search-row"><Search size={16} /><input value={search} onChange={(event) => setSearch(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void searchHuggingFace(); }} placeholder="Buscar Qwen, Llama, Coder…" /><button onClick={() => void searchHuggingFace()}>Buscar</button></div><div className="model-grid">{visibleModels.map((item) => <article className="model-card" key={item.id}><div className="model-card-top"><span className="model-icon"><Code2 size={17} /></span><span className="model-tag">{item.pipeline_tag || "model"}</span></div><strong>{item.name || item.id}</strong><small>{item.author || item.id.split("/")[0]}</small><div className="model-stats"><span>{formatDownloads(item.downloads)} downloads</span><span>{item.id}</span></div><button className={`install-button ${installed.includes(item.id) ? "installed-button" : ""}`} onClick={() => void installModel(item.id)} disabled={installing === item.id || installed.includes(item.id)}>{installing === item.id ? <Loader2 size={14} className="spin" /> : installed.includes(item.id) ? <Check size={14} /> : <Download size={14} />} {installed.includes(item.id) ? "Preparado" : installing === item.id ? "Instalando…" : "Instalar pelo chat"}</button></article>)}</div></section>;
+function PanelView(props: { panel: Exclude<Panel, null>; profile: Profile; provider: Provider; setProvider: (value: Provider) => void; model: string; setModel: (value: string) => void; search: string; setSearch: (value: string) => void; visibleModels: Model[]; hfReady: boolean; installed: string[]; installing: string | null; installModel: (repoId: string) => Promise<void>; searchHuggingFace: () => Promise<void>; searchOpenRouter: () => Promise<void>; openRouterReady: boolean; apiKey: string; saveApiKey: (value: string) => void; mcpUrl: string; setMcpUrl: (value: string) => void; mcpServers: string[]; connectMcp: () => void; setPanel: (panel: Panel) => void }) {
+  const { panel, provider, setProvider, model, setModel, search, setSearch, visibleModels, hfReady, installed, installing, installModel, searchHuggingFace, searchOpenRouter, openRouterReady, apiKey, saveApiKey, mcpUrl, setMcpUrl, mcpServers, connectMcp, setPanel } = props;
+  if (panel === "models") return <section className="control-panel"><PanelHeader icon={<Download size={19} />} eyebrow={provider === "local" ? "Hugging Face Hub" : "OpenRouter Catalog"} title={provider === "local" ? "Modelos locais" : "Modelos de API"} description={provider === "local" ? "Pesquise até 100 repositórios por consulta no catálogo público do Hugging Face." : "Catálogo completo de modelos disponíveis no OpenRouter; pesquise por nome ou provedor."} onClose={() => setPanel(null)} /><div className="panel-callout"><Laptop size={16} /><span><strong>{provider === "local" ? "Atenção: runtime local" : "API na nuvem"}</strong><small>{provider === "local" ? "A busca encontra repositórios, mas esta versão Android ainda não instala pesos nem executa inferência offline. Selecione um modelo para abrir sua página oficial." : "Escolha um modelo e envie mensagens usando sua chave pessoal do OpenRouter, configurada em Conexões."}</small></span><span className={provider === "openrouter" && openRouterReady ? "status-good" : "status-muted"}>{provider === "openrouter" ? (openRouterReady ? "API pronta" : "sem chave") : (hfReady ? "token ativo" : "públicos")}</span></div><div className="runtime-selector"><span className={provider === "local" ? "selector-active" : ""} onClick={() => setProvider("local")}>Hugging Face</span><span className={provider === "openrouter" ? "selector-active" : ""} onClick={() => { setProvider("openrouter"); if (!visibleModels.length) void searchOpenRouter(); }}>OpenRouter</span></div><div className="search-row"><Search size={16} /><input value={search} onChange={(event) => setSearch(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void (provider === "local" ? searchHuggingFace() : searchOpenRouter()); }} placeholder={provider === "local" ? "Buscar qualquer modelo: Qwen, Llama, GGUF…" : "Buscar modelo ou provedor: anthropic, openai…"} /><button onClick={() => void (provider === "local" ? searchHuggingFace() : searchOpenRouter())}>Buscar</button></div><div className="model-grid">{visibleModels.map((item) => <article className="model-card" key={item.id}><div className="model-card-top"><span className="model-icon"><Code2 size={17} /></span><span className="model-tag">{item.pipeline_tag || (item.context_length ? item.context_length.toLocaleString() + " tokens" : "model")}</span></div><strong>{item.name || item.id}</strong><small>{item.author || item.id.split("/")[0]}</small><div className="model-stats"><span>{item.downloads !== undefined ? formatDownloads(item.downloads) + " downloads" : (item.pricing ? "Entrada: $" + (item.pricing.prompt || "?") + " / token" : "Modelo disponível")}</span><span>{item.id}</span></div><button className="install-button" onClick={() => { if (provider === "local") void installModel(item.id); else { setModel(item.id); setPanel(null); } }}>{provider === "local" ? "Ver / selecionar modelo" : (model === item.id ? "Modelo selecionado" : "Usar este modelo")}</button></article>)}</div></section>;
   if (panel === "skills") return <section className="control-panel"><PanelHeader icon={<Wrench size={19} />} eyebrow="Skills" title="Habilidades do agente" description="Ative instruções especializadas por sessão sem trocar de aplicativo." onClose={() => setPanel(null)} /><div className="skill-list">{[{ icon: Code2, title: "Code Architect", text: "Arquitetura, TypeScript, testes e revisão de código." }, { icon: ShieldCheck, title: "Defensive Security", text: "Threat modeling, hardening, SOC e resposta a incidentes." }, { icon: GitBranch, title: "Git Operator", text: "Branches, commits, diffs e automações com confirmação." }, { icon: TerminalSquare, title: "Terminal Safe Mode", text: "Comandos rastreáveis, sem execução destrutiva por padrão." }].map(({ icon: Icon, title, text }) => <button className="skill-card" key={title}><span className="skill-icon"><Icon size={17} /></span><span><strong>{title}</strong><small>{text}</small></span><span className="toggle toggle-on"><span /></span></button>)}</div><div className="panel-note"><Sparkles size={15} /> Skills são instruções reutilizáveis. MCPs fornecem ferramentas e dados.</div></section>;
   if (panel === "mcp") return <section className="control-panel"><PanelHeader icon={<Network size={19} />} eyebrow="Model Context Protocol" title="Servidores MCP" description="Conecte ferramentas e dados externos para os dois perfis de IA." onClose={() => setPanel(null)} /><div className="mcp-list">{mcpServers.map((server) => <div className="mcp-row" key={server}><span className="mcp-status"><span className="live-dot" /></span><span><strong>{server.split(" · ")[0]}</strong><small>{server.includes("local") ? "servidor local · ferramentas autorizadas" : "endpoint conectado"}</small></span><button><Settings2 size={15} /></button></div>)}</div><div className="mcp-add"><label>Endpoint MCP</label><div className="search-row"><Server size={16} /><input value={mcpUrl} onChange={(event) => setMcpUrl(event.target.value)} placeholder="http://localhost:3001/mcp" /><button onClick={connectMcp}>Conectar</button></div></div><div className="panel-note"><ShieldCheck size={15} /> Conecte apenas servidores que você controla ou confia. A IA pedirá confirmação antes de ações sensíveis.</div></section>;
-  return <section className="control-panel"><PanelHeader icon={<Link2 size={19} />} eyebrow="Runtime e provedores" title="Conexões" description="O app não tem planos pagos. Você escolhe onde executar cada sessão e mantém suas próprias chaves." onClose={() => setPanel(null)} /><div className="connection-card"><div className="connection-icon"><Laptop size={18} /></div><div><strong>Runtime local</strong><small>Disponível agora · respostas de fallback e modelos preparados no projeto</small></div><span className="connection-status"><span className="live-dot" /> ativo</span></div><div className="connection-card"><div className="connection-icon openrouter-icon"><Globe2 size={18} /></div><div><strong>OpenRouter API</strong><small>{openRouterReady ? "Chave configurada no ambiente seguro do projeto" : "Configure OPENROUTER_API_KEY no ambiente do projeto"}</small></div><span className={openRouterReady ? "connection-status" : "connection-status status-muted"}>{openRouterReady ? "conectado" : "não configurado"}</span></div><div className="connection-card"><div className="connection-icon"><Download size={18} /></div><div><strong>Hugging Face Hub</strong><small>Busca pública liberada; token opcional para repositórios privados</small></div><span className="connection-status"><span className="live-dot" /> pronto</span></div><div className="panel-note"><Zap size={15} /> Nenhum plano é cobrado pelo Lumina. O OpenRouter pode cobrar conforme a chave e o modelo que você escolher.</div></section>;
+  return <section className="control-panel"><PanelHeader icon={<Link2 size={19} />} eyebrow="Runtime e provedores" title="Conexões" description="O app não tem planos pagos. Você escolhe onde executar cada sessão e mantém suas próprias chaves." onClose={() => setPanel(null)} /><div className="connection-card"><div className="connection-icon"><Laptop size={18} /></div><div><strong>Runtime local</strong><small>Disponível agora · respostas de fallback e modelos preparados no projeto</small></div><span className="connection-status"><span className="live-dot" /> ativo</span></div><div className="connection-card"><div className="connection-icon openrouter-icon"><Globe2 size={18} /></div><div className="connection-main"><strong>OpenRouter API</strong><small>{openRouterReady ? "Chave salva neste dispositivo" : "Cole sua chave para ativar o chat e os modelos da API"}</small><input type="password" autoComplete="off" value={apiKey} onChange={(event) => saveApiKey(event.target.value)} placeholder="sk-or-v1-…" aria-label="Chave de API do OpenRouter" /></div><span className={openRouterReady ? "connection-status" : "connection-status status-muted"}>{openRouterReady ? "conectado" : "sem chave"}</span></div><div className="connection-card"><div className="connection-icon"><Download size={18} /></div><div><strong>Hugging Face Hub</strong><small>Busca pública liberada; token opcional para repositórios privados</small></div><span className="connection-status"><span className="live-dot" /> pronto</span></div><div className="panel-note"><Zap size={15} /> Nenhum plano é cobrado pelo Lumina. O OpenRouter pode cobrar conforme a chave e o modelo que você escolher.</div></section>;
 }
 
 function PanelHeader({ icon, eyebrow, title, description, onClose }: { icon: React.ReactNode; eyebrow: string; title: string; description: string; onClose: () => void }) { return <div className="panel-header"><div className="panel-heading"><span className="panel-icon">{icon}</span><span className="eyebrow">{eyebrow}</span><h1>{title}</h1><p>{description}</p></div><button className="panel-close" onClick={onClose}><X size={18} /></button></div>; }
