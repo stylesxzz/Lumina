@@ -162,14 +162,19 @@ export default function Home() {
     addMessage({ id: pendingId, role: "assistant", content: "", time: now(), pending: true });
     try {
       let content = "";
-      if (provider === "openrouter" && openRouterReady) {
-        const response = await fetch("/api/openrouter/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model, messages: [{ role: "system", content: t.system }, ...messages.filter((item) => item.role !== "system").slice(-10).map((item) => ({ role: item.role, content: item.content })), { role: "user", content: `${text}${attachmentText}` }] }) });
+      if (provider === "openrouter") {
+        const key = window.localStorage.getItem("lumina.openrouter.key");
+        if (!key || !openRouterReady) throw new Error("OpenRouter não conectada. Abra Conexões e valide sua chave.");
+        const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+          method: "POST",
+          headers: { Authorization: "Bearer " + key, "Content-Type": "application/json", "X-OpenRouter-Title": "Lumina Studio" },
+          body: JSON.stringify({ model, messages: [{ role: "system", content: t.system }, ...messages.filter((item) => item.role !== "system").slice(-10).map((item) => ({ role: item.role, content: item.content })), { role: "user", content: text + attachmentText }], temperature: 0.2 })
+        });
         const payload = await response.json();
-        if (!response.ok) throw new Error(payload.error || "OpenRouter indisponível");
-        content = payload.content;
+        if (!response.ok) throw new Error(payload?.error?.message || "OpenRouter HTTP " + response.status);
+        content = payload?.choices?.[0]?.message?.content || "O modelo não retornou texto.";
       } else {
-        await new Promise((resolve) => window.setTimeout(resolve, 560));
-        content = localReply(`${text}${attachmentText}`);
+        throw new Error("O runtime GGUF local ainda não está integrado a este APK. Não vou simular uma resposta de IA.");
       }
       setMessages((current) => current.map((item) => item.id === pendingId ? { ...item, content, pending: false, time: now() } : item));
     } catch (error) {
