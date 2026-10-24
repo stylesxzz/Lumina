@@ -74,7 +74,7 @@ function BrandMark() { return <span className="brand-mark"><Sparkles size={17} /
 export default function Home() {
   const [profile, setProfile] = useState<Profile>("dev");
   const [provider, setProvider] = useState<Provider>("local");
-  const [model, setModel] = useState("Qwen/Qwen2.5-Coder-7B-Instruct");
+  const [model, setModel] = useState("openai/gpt-4o-mini");
   const [messages, setMessages] = useState<Message[]>([]);
   const [draft, setDraft] = useState("");
   const [panel, setPanel] = useState<Panel>(null);
@@ -100,9 +100,8 @@ export default function Home() {
   const t = profileCopy[profile];
 
   useEffect(() => {
-    fetch("/api/ai/status").then((response) => response.json()).then((status) => { setOpenRouterReady(Boolean(status.openRouterConfigured)); setHfReady(Boolean(status.huggingFaceConfigured)); }).catch(() => undefined);
-    fetch("/api/connections/status").then((response) => response.json()).then((status) => { setOpenRouterReady(Boolean(status.openRouter)); }).catch(() => undefined);
-    fetch("/api/mcp/servers").then((response) => response.json()).then((payload) => { if (Array.isArray(payload.servers)) setMcpServers(payload.servers); }).catch(() => undefined);
+    // Static Capacitor APK has no relative /api backend. OpenRouter is called directly from the device.
+    try { setOpenRouterReady(Boolean(window.localStorage.getItem("lumina.openrouter.key"))); } catch { setOpenRouterReady(false); }
   }, []);
 
   useEffect(() => { composerRef.current?.focus(); }, [profile]);
@@ -198,7 +197,21 @@ export default function Home() {
     finally { setUploading(false); event.target.value = ""; }
   };
   const connectMcp = async () => { const value = mcpUrl.trim(); if (!value) return; try { const response = await fetch("/api/mcp/connect", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: value, token: mcpToken }) }); const payload = await response.json(); if (!response.ok) throw new Error(payload.error || "Falha ao conectar"); setMcpServers((current) => [...current.filter((item) => item.url !== value), payload.server]); setMcpUrl(""); setMcpToken(""); } catch (error) { addMessage({ id: Date.now(), role: "system", content: error instanceof Error ? error.message : "Não foi possível conectar o MCP.", time: now(), kind: "tool" }); } };
-  const connectOpenRouter = async () => { if (!openRouterInput.trim()) return; setSavingConnection("openrouter"); try { const response = await fetch("/api/connections/openrouter", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ apiKey: openRouterInput }) }); const payload = await response.json(); if (!response.ok) throw new Error(payload.error); setOpenRouterReady(true); setOpenRouterInput(""); } catch (error) { addMessage({ id: Date.now(), role: "system", content: error instanceof Error ? error.message : "Falha na OpenRouter.", time: now() }); } finally { setSavingConnection(null); } };
+  const connectOpenRouter = async () => {
+    const apiKey = openRouterInput.trim();
+    if (!apiKey) return;
+    setSavingConnection("openrouter");
+    try {
+      const response = await fetch("https://openrouter.ai/api/v1/key", { headers: { Authorization: "Bearer " + apiKey } });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload?.error?.message || "A chave foi recusada pela OpenRouter.");
+      window.localStorage.setItem("lumina.openrouter.key", apiKey);
+      setOpenRouterReady(true); setOpenRouterInput("");
+      addMessage({ id: Date.now(), role: "system", content: "OpenRouter validada e salva neste dispositivo.", time: now() });
+    } catch (error) {
+      addMessage({ id: Date.now(), role: "system", content: error instanceof Error ? error.message : "Falha na OpenRouter.", time: now() });
+    } finally { setSavingConnection(null); }
+  };
 
   return <div className="lumina-app studio-app">
     <aside className={`sidebar ${mobileMenu ? "sidebar-open" : ""}`}>
