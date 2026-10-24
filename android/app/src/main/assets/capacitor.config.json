@@ -1,0 +1,8 @@
+{
+	"appId": "app.lumina.studio",
+	"appName": "Lumina Studio",
+	"webDir": "dist/public",
+	"android": {
+		"backgroundColor": "#0b0b10"
+	}
+}
