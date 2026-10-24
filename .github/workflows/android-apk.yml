@@ -3,6 +3,8 @@ name: Android APK
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -33,6 +35,8 @@ jobs:
           packages: 'platform-tools'
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+      - name: TypeScript check
+        run: pnpm check
       - name: Build web assets
         run: pnpm build:static
       - name: Sync Capacitor

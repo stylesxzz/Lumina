@@ -39,7 +39,8 @@ type Panel = "models" | "skills" | "mcp" | "connections" | null;
 type Message = { id: number; role: "user" | "assistant" | "system"; content: string; time: string; kind?: "install" | "tool"; pending?: boolean };
 type Model = { id: string; name: string; author: string; downloads?: number; pipeline_tag?: string; installed?: boolean };
 type Attachment = { name: string; type: string; size: number; excerpt?: string; storedName?: string };
-type McpServer = { name: string; url: string; tools: string[]; connectedAt?: string };
+type McpTool = { name: string; description?: string; inputSchema?: Record<string, unknown> };
+type McpServer = { name: string; url: string; tools: McpTool[]; token?: string; sessionId?: string; connectedAt?: string };
 
 const now = () => new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit" }).format(new Date());
 const formatDownloads = (value?: number) => !value ? "—" : value > 1000000 ? `${(value / 1000000).toFixed(1)}M` : value > 1000 ? `${Math.round(value / 1000)}k` : String(value);
@@ -74,7 +75,7 @@ function BrandMark() { return <span className="brand-mark"><Sparkles size={17} /
 export default function Home() {
   const [profile, setProfile] = useState<Profile>("dev");
   const [provider, setProvider] = useState<Provider>("local");
-  const [model, setModel] = useState("Qwen/Qwen2.5-Coder-7B-Instruct");
+  const [model, setModel] = useState("openai/gpt-4o-mini");
   const [messages, setMessages] = useState<Message[]>([]);
   const [draft, setDraft] = useState("");
   const [panel, setPanel] = useState<Panel>(null);
@@ -96,13 +97,14 @@ export default function Home() {
   const [isThinking, setIsThinking] = useState(false);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const modelFileInputRef = useRef<HTMLInputElement>(null);
+  const [selectedLocalModel, setSelectedLocalModel] = useState<{ name: string; size: number; file: File } | null>(null);
   const copyTimer = useRef<number | null>(null);
   const t = profileCopy[profile];
 
   useEffect(() => {
-    fetch("/api/ai/status").then((response) => response.json()).then((status) => { setOpenRouterReady(Boolean(status.openRouterConfigured)); setHfReady(Boolean(status.huggingFaceConfigured)); }).catch(() => undefined);
-    fetch("/api/connections/status").then((response) => response.json()).then((status) => { setOpenRouterReady(Boolean(status.openRouter)); }).catch(() => undefined);
-    fetch("/api/mcp/servers").then((response) => response.json()).then((payload) => { if (Array.isArray(payload.servers)) setMcpServers(payload.servers); }).catch(() => undefined);
+    // Static Capacitor APK has no relative /api backend. OpenRouter is called directly from the device.
+    try { setOpenRouterReady(Boolean(window.localStorage.getItem("lumina.openrouter.key"))); } catch { setOpenRouterReady(false); }
   }, []);
 
   useEffect(() => { composerRef.current?.focus(); }, [profile]);
@@ -141,10 +143,23 @@ export default function Home() {
   const searchHuggingFace = async () => {
     if (!search.trim()) return;
     try {
-      const response = await fetch(`/api/huggingface/models?search=${encodeURIComponent(search)}`);
+      if (provider === "openrouter") {
+        const key = window.localStorage.getItem("lumina.openrouter.key");
+        if (!key) throw new Error("Conecte a OpenRouter em Conexões primeiro.");
+        const response = await fetch("https://openrouter.ai/api/v1/models", { headers: { Authorization: "Bearer " + key } });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload?.error?.message || "Falha ao buscar modelos da OpenRouter.");
+        const models = (Array.isArray(payload.data) ? payload.data : []).filter((item: any) => (item.id + " " + (item.name || "")).toLowerCase().includes(search.toLowerCase())).slice(0, 80);
+        setHfModels(models.map((item: any) => ({ id: item.id, name: item.name || item.id, author: item.id.split("/")[0], pipeline_tag: "OpenRouter" })));
+        return;
+      }
+      const response = await fetch("https://huggingface.co/api/models?search=" + encodeURIComponent(search) + "&sort=downloads&direction=-1&limit=20");
       const payload = await response.json();
-      if (response.ok && Array.isArray(payload.models)) setHfModels(payload.models.map((item: Model) => ({ ...item, name: item.id.split("/").pop() || item.id, author: item.id.split("/")[0] })));
-    } catch { /* keep local catalog */ }
+      if (!response.ok) throw new Error(payload?.error || "Falha na busca do Hugging Face.");
+      if (Array.isArray(payload)) setHfModels(payload.map((item: Model) => ({ ...item, name: item.id.split("/").pop() || item.id, author: item.id.split("/")[0] })));
+    } catch (error) {
+      addMessage({ id: Date.now(), role: "system", content: error instanceof Error ? error.message : "Falha ao buscar modelos.", time: now() });
+    }
   };
 
   const send = async (value = draft) => {
@@ -163,42 +178,143 @@ export default function Home() {
     addMessage({ id: pendingId, role: "assistant", content: "", time: now(), pending: true });
     try {
       let content = "";
-      if (provider === "openrouter" && openRouterReady) {
-        const response = await fetch("/api/openrouter/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model, messages: [{ role: "system", content: t.system }, ...messages.filter((item) => item.role !== "system").slice(-10).map((item) => ({ role: item.role, content: item.content })), { role: "user", content: `${text}${attachmentText}` }] }) });
-        const payload = await response.json();
-        if (!response.ok) throw new Error(payload.error || "OpenRouter indisponível");
-        content = payload.content;
+      if (provider === "openrouter") {
+        const key = window.localStorage.getItem("lumina.openrouter.key");
+        if (!key || !openRouterReady) throw new Error("OpenRouter não conectada. Abra Conexões e valide sua chave.");
+        const history: any[] = [...messages.filter((item) => item.role !== "system").slice(-10).map((item) => ({ role: item.role, content: item.content })), { role: "user", content: text + attachmentText }];
+        const toolLookup = new Map<string, { server: McpServer; tool: McpTool }>();
+        const tools = mcpServers.flatMap((server, serverIndex) => server.tools.map((tool) => {
+          const name = ("mcp_" + serverIndex + "_" + tool.name).replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64);
+          toolLookup.set(name, { server, tool });
+          return { type: "function", function: { name, description: ("MCP " + server.name + ": " + (tool.description || tool.name)).slice(0, 1000), parameters: tool.inputSchema || { type: "object", properties: {} } } };
+        }));
+        for (let round = 0; round < 4; round++) {
+          const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+            method: "POST",
+            headers: { Authorization: "Bearer " + key, "Content-Type": "application/json", "X-OpenRouter-Title": "Lumina Studio" },
+            body: JSON.stringify({ model, messages: [{ role: "system", content: t.system }, ...history], ...(tools.length ? { tools, tool_choice: "auto" } : {}), temperature: 0.2 })
+          });
+          const payload = await response.json();
+          if (!response.ok) throw new Error(payload?.error?.message || "OpenRouter HTTP " + response.status);
+          const answer = payload?.choices?.[0]?.message;
+          if (!answer) throw new Error("A OpenRouter não retornou uma resposta válida.");
+          if (!Array.isArray(answer.tool_calls) || answer.tool_calls.length === 0) {
+            content = typeof answer.content === "string" ? answer.content : JSON.stringify(answer.content ?? "O modelo não retornou texto.");
+            break;
+          }
+          history.push({ role: "assistant", content: answer.content || null, tool_calls: answer.tool_calls });
+          for (const call of answer.tool_calls) {
+            const target = toolLookup.get(call.function?.name);
+            if (!target) { history.push({ role: "tool", tool_call_id: call.id, content: "Ferramenta MCP não encontrada." }); continue; }
+            try {
+              const headers: Record<string, string> = { "Content-Type": "application/json", Accept: "application/json, text/event-stream" };
+              if (target.server.token) headers.Authorization = "Bearer " + target.server.token;
+              if (target.server.sessionId) headers["mcp-session-id"] = target.server.sessionId;
+              const toolResponse = await fetch(target.server.url, { method: "POST", headers, body: JSON.stringify({ jsonrpc: "2.0", id: Date.now(), method: "tools/call", params: { name: target.tool.name, arguments: JSON.parse(call.function.arguments || "{}") } }) });
+              const raw = await toolResponse.text();
+              const dataLine = raw.split("\\n").filter((line) => line.startsWith("data:")).pop();
+              const result = dataLine ? JSON.parse(dataLine.slice(5).trim()) : JSON.parse(raw || "{}");
+              if (!toolResponse.ok || result.error) throw new Error(result.error?.message || "MCP HTTP " + toolResponse.status);
+              history.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(result.result ?? result).slice(0, 12000) });
+            } catch (toolError) {
+              history.push({ role: "tool", tool_call_id: call.id, content: "Falha MCP: " + (toolError instanceof Error ? toolError.message : "erro desconhecido") });
+            }
+          }
+          if (round === 3) content = "As ferramentas MCP atingiram o limite de 4 ciclos. Peça uma tarefa mais específica.";
+        }
       } else {
-        await new Promise((resolve) => window.setTimeout(resolve, 560));
-        content = localReply(`${text}${attachmentText}`);
+        throw new Error("O runtime GGUF local ainda não está integrado a este APK. Não vou simular uma resposta de IA.");
       }
       setMessages((current) => current.map((item) => item.id === pendingId ? { ...item, content, pending: false, time: now() } : item));
     } catch (error) {
-      setMessages((current) => current.map((item) => item.id === pendingId ? { ...item, content: `${error instanceof Error ? error.message : "Falha no provedor"}. Você pode voltar para o modo Local e continuar sem chave externa.`, pending: false } : item));
+      setMessages((current) => current.map((item) => item.id === pendingId ? { ...item, content: `${error instanceof Error ? error.message : "Falha no provedor"}. Confira a conexão, a chave e o modelo selecionado.`, pending: false } : item));
     } finally { setIsThinking(false); }
   };
 
   const clearChat = () => { setMessages([]); setDraft(""); setAttachments([]); setPanel(null); setMobileMenu(false); };
   const copyMessage = async (message: Message) => { try { await navigator.clipboard.writeText(message.content); } catch { /* Preview can block clipboard */ } setCopiedId(message.id); if (copyTimer.current) window.clearTimeout(copyTimer.current); copyTimer.current = window.setTimeout(() => setCopiedId(null), 1400); };
+  const handleModelFile = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith(".gguf")) {
+      addMessage({ id: Date.now(), role: "system", content: "Selecione um arquivo de modelo com extensão .gguf.", time: now() });
+      event.target.value = "";
+      return;
+    }
+    setSelectedLocalModel({ name: file.name, size: file.size, file });
+    setProvider("local");
+    setModel(file.name);
+    addMessage({ id: Date.now(), role: "system", content: `Arquivo GGUF selecionado: ${file.name} (${(file.size / (1024 ** 3)).toFixed(2)} GB). A Lumina reconheceu o arquivo; a execução ainda depende da integração do runtime nativo llama.cpp, então ele não será anunciado como carregado.`, time: now(), kind: "install" });
+    event.target.value = "";
+  };
+
   const handleFiles = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(event.target.files || []);
-    if (!files.length) return;
+    const selected = Array.from(event.target.files || []);
+    if (!selected.length) return;
+    const ggufFiles = selected.filter((file) => file.name.toLowerCase().endsWith(".gguf"));
+    const files = selected.filter((file) => !file.name.toLowerCase().endsWith(".gguf"));
+    if (ggufFiles.length) {
+      addMessage({ id: Date.now(), role: "system", content: "Detectei " + ggufFiles.map((file) => file.name).join(", ") + ". Este APK ainda não inclui o runtime nativo GGUF; não vou ler o modelo inteiro na memória nem fingir que foi instalado. A integração nativa ainda está pendente.", time: now(), kind: "install" });
+    }
+    if (!files.length) { event.target.value = ""; return; }
     setUploading(true);
     try {
-      const uploaded = await Promise.all(files.map(async (file) => {
-        const data = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(reader.error); reader.readAsDataURL(file); });
-        const excerpt = file.type.startsWith("text/") || /\.(md|json|ts|tsx|js|jsx|py|java|go|rs|html|css|yaml|yml|csv|log)$/i.test(file.name) ? await file.text().then((value) => value.slice(0, 12000)) : undefined;
-        const response = await fetch("/api/files/upload", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: file.name, type: file.type, data }) });
-        const payload = await response.json();
-        if (!response.ok) throw new Error(payload.error || "Falha no upload");
-        return { name: file.name, type: file.type, size: file.size, excerpt, storedName: payload.storedName } as Attachment;
+      const attached = await Promise.all(files.map(async (file) => {
+        const isText = file.type.startsWith("text/") || /\\.(md|json|ts|tsx|js|jsx|py|java|go|rs|html|css|yaml|yml|csv|log|txt|xml|toml)$/i.test(file.name);
+        const excerpt = isText ? (await file.text()).slice(0, 12000) : undefined;
+        return { name: file.name, type: file.type, size: file.size, excerpt } as Attachment;
       }));
-      setAttachments((current) => [...current, ...uploaded]);
-    } catch (error) { addMessage({ id: Date.now(), role: "system", content: error instanceof Error ? error.message : "Não foi possível anexar o arquivo.", time: now() }); }
-    finally { setUploading(false); event.target.value = ""; }
+      setAttachments((current) => [...current, ...attached]);
+    } catch (error) {
+      addMessage({ id: Date.now(), role: "system", content: error instanceof Error ? error.message : "Não foi possível ler o arquivo.", time: now() });
+    } finally { setUploading(false); event.target.value = ""; }
   };
-  const connectMcp = async () => { const value = mcpUrl.trim(); if (!value) return; try { const response = await fetch("/api/mcp/connect", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: value, token: mcpToken }) }); const payload = await response.json(); if (!response.ok) throw new Error(payload.error || "Falha ao conectar"); setMcpServers((current) => [...current.filter((item) => item.url !== value), payload.server]); setMcpUrl(""); setMcpToken(""); } catch (error) { addMessage({ id: Date.now(), role: "system", content: error instanceof Error ? error.message : "Não foi possível conectar o MCP.", time: now(), kind: "tool" }); } };
-  const connectOpenRouter = async () => { if (!openRouterInput.trim()) return; setSavingConnection("openrouter"); try { const response = await fetch("/api/connections/openrouter", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ apiKey: openRouterInput }) }); const payload = await response.json(); if (!response.ok) throw new Error(payload.error); setOpenRouterReady(true); setOpenRouterInput(""); } catch (error) { addMessage({ id: Date.now(), role: "system", content: error instanceof Error ? error.message : "Falha na OpenRouter.", time: now() }); } finally { setSavingConnection(null); } };
+  const connectMcp = async () => {
+    const value = mcpUrl.trim();
+    if (!value) return;
+    try {
+      const headers: Record<string, string> = { Accept: "application/json, text/event-stream", "Content-Type": "application/json" };
+      if (mcpToken.trim()) headers.Authorization = "Bearer " + mcpToken.trim();
+      const readRpc = async (response: Response) => {
+        const raw = await response.text();
+        const dataLine = raw.split("\\n").filter((line) => line.startsWith("data:")).pop();
+        return dataLine ? JSON.parse(dataLine.slice(5).trim()) : JSON.parse(raw || "{}");
+      };
+      const initialize = await fetch(value, { method: "POST", headers, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "Lumina Studio", version: "1.1.0" } } }) });
+      const initPayload = await readRpc(initialize);
+      if (!initialize.ok || initPayload.error) throw new Error(initPayload.error?.message || "MCP initialize HTTP " + initialize.status + ". O endpoint pode bloquear CORS no Android.");
+      const sessionId = initialize.headers.get("mcp-session-id") || undefined;
+      const sessionHeaders = { ...headers, "MCP-Protocol-Version": "2025-06-18", ...(sessionId ? { "mcp-session-id": sessionId } : {}) };
+      await fetch(value, { method: "POST", headers: sessionHeaders, body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) });
+      const toolsResponse = await fetch(value, { method: "POST", headers: sessionHeaders, body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }) });
+      const toolsPayload = await readRpc(toolsResponse);
+      if (!toolsResponse.ok || toolsPayload.error) throw new Error(toolsPayload.error?.message || "MCP tools/list HTTP " + toolsResponse.status);
+      const tools: McpTool[] = Array.isArray(toolsPayload?.result?.tools) ? toolsPayload.result.tools.filter((tool: any) => typeof tool.name === "string").map((tool: any) => ({ name: tool.name, description: tool.description, inputSchema: tool.inputSchema })) : [];
+      if (!tools.length) throw new Error("Servidor conectado, mas não anunciou ferramentas em tools/list.");
+      const connection: McpServer = { name: new URL(value).hostname, url: value, tools, token: mcpToken.trim() || undefined, sessionId, connectedAt: new Date().toISOString() };
+      setMcpServers((current) => {
+        return [...current.filter((item) => item.url !== value), connection];
+      });
+      setMcpUrl(""); setMcpToken("");
+    } catch (error) {
+      addMessage({ id: Date.now(), role: "system", content: error instanceof Error ? error.message : "Não foi possível conectar o MCP.", time: now(), kind: "tool" });
+    }
+  };
+  const connectOpenRouter = async () => {
+    const apiKey = openRouterInput.trim();
+    if (!apiKey) return;
+    setSavingConnection("openrouter");
+    try {
+      const response = await fetch("https://openrouter.ai/api/v1/key", { headers: { Authorization: "Bearer " + apiKey } });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload?.error?.message || "A chave foi recusada pela OpenRouter.");
+      window.localStorage.setItem("lumina.openrouter.key", apiKey);
+      setOpenRouterReady(true); setOpenRouterInput("");
+      addMessage({ id: Date.now(), role: "system", content: "OpenRouter validada e salva neste dispositivo.", time: now() });
+    } catch (error) {
+      addMessage({ id: Date.now(), role: "system", content: error instanceof Error ? error.message : "Falha na OpenRouter.", time: now() });
+    } finally { setSavingConnection(null); }
+  };
 
   return <div className="lumina-app studio-app">
     <aside className={`sidebar ${mobileMenu ? "sidebar-open" : ""}`}>
@@ -212,26 +328,26 @@ export default function Home() {
         <button className={`nav-item ${panel === "connections" ? "nav-item-active" : ""}`} onClick={() => setPanel("connections")}><Link2 size={17} /><span>Conexões</span></button>
       </nav>
       <div className="sidebar-section-label">Sessões recentes</div><div className="recent-list">{messages.length ? <button className="recent-item" onClick={() => setPanel(null)}><span className="recent-dot" /><span className="recent-text">Sessão {profile === "dev" ? "de desenvolvimento" : "de defesa"}</span></button> : <p className="empty-recent">Suas sessões aparecem aqui.</p>}</div>
-      <div className="sidebar-bottom"><div className="runtime-card"><div className="runtime-head"><span className="live-dot" /> Runtime local <span className="runtime-ready">pronto</span></div><div className="runtime-row"><Laptop size={14} /> <span>Modelos instalados</span><strong>{installed.length}</strong></div><div className="runtime-row"><TerminalSquare size={14} /> <span>MCP ativo</span><strong>{mcpServers.length}</strong></div></div><button className="profile-row" onClick={() => setPanel("connections")}><span className="avatar">LS</span><span className="profile-copy"><strong>Local Studio</strong><small>Sem planos pagos</small></span><Settings2 size={16} /></button></div>
+      <div className="sidebar-bottom"><div className="runtime-card"><div className="runtime-head"><span className="live-dot" /> Runtime GGUF <span className="runtime-ready">pendente</span></div><div className="runtime-row"><Laptop size={14} /> <span>Modelos instalados</span><strong>{installed.length}</strong></div><div className="runtime-row"><TerminalSquare size={14} /> <span>MCP ativo</span><strong>{mcpServers.length}</strong></div></div><button className="profile-row" onClick={() => setPanel("connections")}><span className="avatar">LS</span><span className="profile-copy"><strong>Local Studio</strong><small>Sem planos pagos</small></span><Settings2 size={16} /></button></div>
     </aside>
     {mobileMenu && <button className="mobile-scrim" onClick={() => setMobileMenu(false)} aria-label="Fechar menu" />}
     <main className="main-panel">
-  return <section className="control-panel"><PanelHeader icon={<Link2 size={19} />} eyebrow="Conexão principal" title="OpenRouter API" description="A Lumina usa a OpenRouter para conversar com os modelos escolhidos. MCP e upload de arquivos ficam nos painéis próprios." onClose={() => setPanel(null)} /><div className="connection-card"><div className="connection-icon openrouter-icon"><Globe2 size={18} /></div><div><strong>OpenRouter API</strong><small>{openRouterReady ? "Conectada e pronta para os modelos" : "Cole sua chave para habilitar a API"}</small></div><span className={openRouterReady ? "connection-status" : "connection-status status-muted"}>{openRouterReady ? "conectado" : "pendente"}</span></div><div className="connection-form"><input className="mcp-token-input" value={openRouterInput} onChange={(event) => setOpenRouterInput(event.target.value)} placeholder="Chave da OpenRouter" type="password" /><button className="install-button" onClick={() => void connectOpenRouter()} disabled={savingConnection === "openrouter"}>{savingConnection === "openrouter" ? <Loader2 size={14} className="spin" /> : <Globe2 size={14} />} Validar e conectar</button></div><div className="panel-note"><ShieldCheck size={15} /> A chave é validada no servidor e não aparece novamente na interface.</div></section>;
+  return <section className="control-panel"><PanelHeader icon={<Link2 size={19} />} eyebrow="Conexão principal" title="OpenRouter API" description="A Lumina usa a OpenRouter para conversar com os modelos escolhidos. MCP e upload de arquivos ficam nos painéis próprios." onClose={() => setPanel(null)} /><div className="connection-card"><div className="connection-icon openrouter-icon"><Globe2 size={18} /></div><div><strong>OpenRouter API</strong><small>{openRouterReady ? "Conectada e pronta para os modelos" : "Cole sua chave para habilitar a API"}</small></div><span className={openRouterReady ? "connection-status" : "connection-status status-muted"}>{openRouterReady ? "conectado" : "pendente"}</span></div><div className="connection-form"><input className="mcp-token-input" value={openRouterInput} onChange={(event) => setOpenRouterInput(event.target.value)} placeholder="Chave da OpenRouter" type="password" /><button className="install-button" onClick={() => void connectOpenRouter()} disabled={savingConnection === "openrouter"}>{savingConnection === "openrouter" ? <Loader2 size={14} className="spin" /> : <Globe2 size={14} />} Validar e conectar</button></div><div className="panel-note"><ShieldCheck size={15} /> A chave é guardada no armazenamento local do app e enviada diretamente à OpenRouter. Em aparelho compartilhado, apague a chave ao terminar.</div><button className="install-button" onClick={() => { window.localStorage.removeItem("lumina.openrouter.key"); setOpenRouterReady(false); }}>Desconectar e apagar chave</button></section>;
       <div className="studio-body">
-        {panel ? <PanelView panel={panel} profile={profile} search={search} setSearch={setSearch} visibleModels={visibleModels} hfReady={hfReady} installed={installed} installing={installing} installModel={installModel} searchHuggingFace={searchHuggingFace} openRouterReady={openRouterReady} openRouterInput={openRouterInput} setOpenRouterInput={setOpenRouterInput} savingConnection={savingConnection} connectOpenRouter={connectOpenRouter} mcpUrl={mcpUrl} setMcpUrl={setMcpUrl} mcpToken={mcpToken} setMcpToken={setMcpToken} mcpServers={mcpServers} connectMcp={connectMcp} setPanel={setPanel} /> : <section className={`conversation ${messages.length ? "conversation-active" : ""}`}>
+        {panel ? <PanelView panel={panel} profile={profile} provider={provider} model={model} setModel={setModel} search={search} setSearch={setSearch} visibleModels={visibleModels} hfReady={hfReady} installed={installed} installing={installing} installModel={installModel} searchHuggingFace={searchHuggingFace} openRouterReady={openRouterReady} openRouterInput={openRouterInput} setOpenRouterInput={setOpenRouterInput} savingConnection={savingConnection} connectOpenRouter={connectOpenRouter} mcpUrl={mcpUrl} setMcpUrl={setMcpUrl} mcpToken={mcpToken} setMcpToken={setMcpToken} mcpServers={mcpServers} connectMcp={connectMcp} setPanel={setPanel} modelFileInputRef={modelFileInputRef} selectedLocalModel={selectedLocalModel} onImportGguf={handleModelFile} /> : <section className={`conversation ${messages.length ? "conversation-active" : ""}`}>
           {!messages.length ? <div className="welcome-state studio-welcome"><div className="welcome-orbit"><div className="orbit orbit-one" /><div className="orbit orbit-two" /><div className={`welcome-mark ${profile === "security" ? "security-mark" : ""}`}>{profile === "security" ? <ShieldCheck size={30} /> : <Code2 size={30} />}</div></div><p className={`eyebrow ${profile === "security" ? "security-eyebrow" : ""}`}>{t.label}</p><h1>{t.title}</h1><p className="welcome-copy">{t.subtitle}</p><div className="mode-pills"><span><span className="live-dot" /> Modelo: {provider === "local" ? "local" : "OpenRouter"}</span><span><Network size={12} /> {mcpServers.length} MCP conectados</span><span><Wrench size={12} /> Skills disponíveis</span></div><div className="starter-actions"><button className="starter-card" onClick={() => setPanel("models")}><span className="starter-icon"><Download size={18} /></span><span className="starter-card-copy"><strong>Escolher modelo no Hugging Face</strong><small>Hugging Face direto no chat</small></span><ArrowUp size={15} className="starter-arrow" /></button><button className="starter-card" onClick={() => setPanel("connections")}><span className="starter-icon"><Globe2 size={18} /></span><span className="starter-card-copy"><strong>Conectar OpenRouter</strong><small>Use qualquer modelo da API</small></span><ArrowUp size={15} className="starter-arrow" /></button><button className="starter-card" onClick={() => setPanel("mcp")}><span className="starter-icon"><Network size={18} /></span><span className="starter-card-copy"><strong>Adicionar MCP</strong><small>Ferramentas e dados externos</small></span><ArrowUp size={15} className="starter-arrow" /></button></div></div> : <div className="messages-wrap"><div className="conversation-heading"><div><span className="eyebrow">Sessão {t.short} · {provider === "local" ? "Runtime local" : "OpenRouter"}</span><h2>{t.label}</h2></div><button className="quiet-action" onClick={clearChat}><Plus size={15} /> Nova sessão</button></div><div className="messages-list">{messages.map((message) => <article key={message.id} className={`message-row message-${message.role}`}><div className={`message-avatar ${message.role === "assistant" ? "assistant-avatar" : message.role === "system" ? "system-avatar" : "user-avatar"}`}>{message.role === "assistant" ? <BrandMark /> : message.role === "system" ? <Download size={14} /> : "LS"}</div><div className="message-content"><div className="message-meta"><strong>{message.role === "assistant" ? (provider === "local" ? "Local AI" : "OpenRouter") : message.role === "system" ? "Runtime" : "Você"}</strong><span>{message.time}</span></div>{message.pending ? <div className="typing-bubble"><span /><span /><span /></div> : <p className="message-text">{message.content}</p>}{message.role === "user" && <div className="message-actions"><button onClick={() => copyMessage(message)}>{copiedId === message.id ? <Check size={13} /> : <Copy size={13} />} {copiedId === message.id ? "Copiado" : "Copiar"}</button><button onClick={() => { setDraft(message.content); composerRef.current?.focus(); }}><RotateCcw size={13} /> Reusar</button></div>}</div></article>)}</div></div>}
         </section>}
       </div>
-      <div className="composer-area"><div className="composer"><div className="composer-toolbar"><input ref={fileInputRef} type="file" multiple hidden onChange={(event) => void handleFiles(event)} /><button className="composer-plus" onClick={() => fileInputRef.current?.click()} title="Anexar arquivo"><Paperclip size={18} /></button><div className="runtime-selector"><span className={provider === "local" ? "selector-active" : ""} onClick={() => setProvider("local")}><Laptop size={12} /> Local</span><span className={provider === "openrouter" ? "selector-active" : ""} onClick={() => setProvider("openrouter")}><Globe2 size={12} /> OpenRouter</span></div><span className="composer-spacer" /><button className="model-selector" onClick={() => setPanel("models")}><Bot size={13} /> {model.split("/").pop()} <ChevronDown size={13} /></button></div>{attachments.length > 0 && <div className="attachment-chips">{attachments.map((item) => <span className="attachment-chip" key={item.storedName || item.name}><FileText size={12} /> {item.name}</span>)}</div>}{uploading && <div className="uploading-label"><Loader2 size={12} className="spin" /> Enviando arquivo…</div>}<textarea ref={composerRef} value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void send(); } }} placeholder={profile === "dev" ? "Pergunte, cole código ou use /install autor/modelo…" : "Analise um risco, log ou cenário defensivo…"} rows={2} /><div className="composer-bottom"><div className="composer-hint"><Activity size={13} /> {provider === "local" ? "Execução local · sem plano pago" : openRouterReady ? "OpenRouter conectado" : "Configure OPENROUTER_API_KEY em Conexões"}</div><button className={`send-button ${draft.trim() ? "send-ready" : ""}`} onClick={() => void send()} disabled={!draft.trim() || isThinking}>{isThinking ? <Loader2 size={18} className="spin" /> : <Send size={18} />}</button></div></div><p className="composer-disclaimer">Ações externas devem ser autorizadas. Modelos e ferramentas ficam sob seu controle.</p></div>
+      <div className="composer-area"><div className="composer"><div className="composer-toolbar"><input ref={fileInputRef} type="file" multiple hidden onChange={(event) => void handleFiles(event)} /><button className="composer-plus" onClick={() => fileInputRef.current?.click()} title="Anexar arquivo"><Paperclip size={18} /></button><div className="runtime-selector"><span className={provider === "local" ? "selector-active" : ""} onClick={() => setProvider("local")}><Laptop size={12} /> Local</span><span className={provider === "openrouter" ? "selector-active" : ""} onClick={() => setProvider("openrouter")}><Globe2 size={12} /> OpenRouter</span></div><span className="composer-spacer" /><button className="model-selector" onClick={() => setPanel("models")}><Bot size={13} /> {model.split("/").pop()} <ChevronDown size={13} /></button></div>{attachments.length > 0 && <div className="attachment-chips">{attachments.map((item) => <span className="attachment-chip" key={item.storedName || item.name}><FileText size={12} /> {item.name}</span>)}</div>}{uploading && <div className="uploading-label"><Loader2 size={12} className="spin" /> Enviando arquivo…</div>}<textarea ref={composerRef} value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void send(); } }} placeholder={profile === "dev" ? "Pergunte, cole código ou use /install autor/modelo…" : "Analise um risco, log ou cenário defensivo…"} rows={2} /><div className="composer-bottom"><div className="composer-hint"><Activity size={13} /> {provider === "local" ? "GGUF local indisponível neste build" : openRouterReady ? "OpenRouter conectado" : "Configure OPENROUTER_API_KEY em Conexões"}</div><button className={`send-button ${draft.trim() ? "send-ready" : ""}`} onClick={() => void send()} disabled={!draft.trim() || isThinking}>{isThinking ? <Loader2 size={18} className="spin" /> : <Send size={18} />}</button></div></div><p className="composer-disclaimer">Ações externas devem ser autorizadas. Modelos e ferramentas ficam sob seu controle.</p></div>
     </main>
   </div>;
 }
 
-function PanelView(props: { panel: Exclude<Panel, null>; profile: Profile; search: string; setSearch: (value: string) => void; visibleModels: Model[]; hfReady: boolean; installed: string[]; installing: string | null; installModel: (repoId: string) => Promise<void>; searchHuggingFace: () => Promise<void>; openRouterReady: boolean; openRouterInput: string; setOpenRouterInput: (value: string) => void; savingConnection: "openrouter" | null; connectOpenRouter: () => Promise<void>; mcpUrl: string; setMcpUrl: (value: string) => void; mcpToken: string; setMcpToken: (value: string) => void; mcpServers: McpServer[]; connectMcp: () => void; setPanel: (panel: Panel) => void }) {
-  const { panel, search, setSearch, visibleModels, hfReady, installed, installing, installModel, searchHuggingFace, openRouterReady, openRouterInput, setOpenRouterInput, savingConnection, connectOpenRouter, mcpUrl, setMcpUrl, mcpToken, setMcpToken, mcpServers, connectMcp, setPanel } = props;
-  if (panel === "models") return <section className="control-panel"><PanelHeader icon={<Download size={19} />} eyebrow="Hugging Face Hub" title="Escolher modelo" description="Abra o Hugging Face, escolha o modelo que quiser e faça o download por lá. Depois, use o arquivo pelo botão de anexo do chat." onClose={() => setPanel(null)} /><div className="panel-callout"><Globe2 size={16} /><span><strong>Download direto no Hugging Face</strong><small>O Lumina não força um modelo específico. Cada botão abre a página oficial do repositório para você escolher arquivos, licença e runtime.</small></span><span className="status-good">site oficial</span></div><div className="search-row"><Search size={16} /><input value={search} onChange={(event) => setSearch(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void searchHuggingFace(); }} placeholder="Buscar Qwen, Llama, Coder…" /><button onClick={() => void searchHuggingFace()}>Buscar</button></div><div className="model-grid">{visibleModels.map((item) => <article className="model-card" key={item.id}><div className="model-card-top"><span className="model-icon"><Code2 size={17} /></span><span className="model-tag">{item.pipeline_tag || "model"}</span></div><strong>{item.name || item.id}</strong><small>{item.author || item.id.split("/")[0]}</small><div className="model-stats"><span>{formatDownloads(item.downloads)} downloads</span><span>{item.id}</span></div><a className="install-button" href={`https://huggingface.co/${item.id}`} target="_blank" rel="noreferrer"><Globe2 size={14} /> Abrir no Hugging Face</a></article>)}</div></section>;
+function PanelView(props: { panel: Exclude<Panel, null>; profile: Profile; provider: Provider; model: string; setModel: (value: string) => void; search: string; setSearch: (value: string) => void; visibleModels: Model[]; hfReady: boolean; installed: string[]; installing: string | null; installModel: (repoId: string) => Promise<void>; searchHuggingFace: () => Promise<void>; openRouterReady: boolean; openRouterInput: string; setOpenRouterInput: (value: string) => void; savingConnection: "openrouter" | null; connectOpenRouter: () => Promise<void>; mcpUrl: string; setMcpUrl: (value: string) => void; mcpToken: string; setMcpToken: (value: string) => void; mcpServers: McpServer[]; connectMcp: () => void; setPanel: (panel: Panel) => void; modelFileInputRef: React.RefObject<HTMLInputElement | null>; selectedLocalModel: { name: string; size: number; file: File } | null; onImportGguf: (event: React.ChangeEvent<HTMLInputElement>) => void }) {
+  const { panel, provider, model, setModel, search, setSearch, visibleModels, hfReady, installed, installing, installModel, searchHuggingFace, openRouterReady, openRouterInput, setOpenRouterInput, savingConnection, connectOpenRouter, mcpUrl, setMcpUrl, mcpToken, setMcpToken, mcpServers, connectMcp, setPanel, modelFileInputRef, selectedLocalModel, onImportGguf } = props;
+  if (panel === "models") return <section className="control-panel"><PanelHeader icon={<Download size={19} />} eyebrow="Hugging Face Hub" title="Escolher modelo" description={provider === "openrouter" ? "Busque e selecione um modelo disponível na OpenRouter." : "Consulte modelos no Hugging Face. A execução local de arquivos GGUF requer o runtime nativo, ainda não integrado."} onClose={() => setPanel(null)} /><div className="panel-callout"><Globe2 size={16} /><span><strong>{provider === "openrouter" ? "Modelos de nuvem" : "Modelos locais GGUF"}</strong><small>{provider === "openrouter" ? "Pesquise os modelos disponíveis na OpenRouter e toque em Usar este modelo para selecioná-lo." : "Baixe o modelo no site oficial e depois toque em Importar GGUF para escolher o arquivo que já está no celular. O runtime de inferência ainda depende da integração nativa."}</small></span><span className="status-good">site oficial</span></div>{provider === "local" && <div className="model-import-row"><input ref={modelFileInputRef} type="file" accept=".gguf,application/octet-stream" hidden onChange={onImportGguf} /><button className="install-button" onClick={() => modelFileInputRef.current?.click()}><Download size={14} /> Importar modelo GGUF do celular</button>{selectedLocalModel && <small className="selected-model-file">Selecionado: {selectedLocalModel.name} · {(selectedLocalModel.size / (1024 ** 3)).toFixed(2)} GB</small>}</div>}<div className="search-row"><Search size={16} /><input value={search} onChange={(event) => setSearch(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void searchHuggingFace(); }} placeholder={provider === "openrouter" ? "Buscar modelo da OpenRouter…" : "Buscar modelo no Hugging Face…"} /><button onClick={() => void searchHuggingFace()}>Buscar</button></div><div className="model-grid">{visibleModels.map((item) => <article className="model-card" key={item.id}><div className="model-card-top"><span className="model-icon"><Code2 size={17} /></span><span className="model-tag">{item.pipeline_tag || "model"}</span></div><strong>{item.name || item.id}</strong><small>{item.author || item.id.split("/")[0]}</small><div className="model-stats"><span>{formatDownloads(item.downloads)} downloads</span><span>{item.id}</span></div>{provider === "openrouter" ? <button className="install-button" onClick={() => { setModel(item.id); setPanel(null); }}><Check size={14} /> {model === item.id ? "Modelo selecionado" : "Usar este modelo"}</button> : <a className="install-button" href={`https://huggingface.co/${item.id}`} target="_blank" rel="noreferrer"><Globe2 size={14} /> Abrir no Hugging Face</a>}</article>)}</div></section>;
   if (panel === "skills") return <section className="control-panel"><PanelHeader icon={<Wrench size={19} />} eyebrow="Skills" title="Habilidades do agente" description="Ative instruções especializadas por sessão sem trocar de aplicativo." onClose={() => setPanel(null)} /><div className="skill-list">{[{ icon: Code2, title: "Code Architect", text: "Arquitetura, TypeScript, testes e revisão de código." }, { icon: ShieldCheck, title: "Defensive Security", text: "Threat modeling, hardening, SOC e resposta a incidentes." }, { icon: GitBranch, title: "Git Operator", text: "Branches, commits, diffs e automações com confirmação." }, { icon: TerminalSquare, title: "Terminal Safe Mode", text: "Comandos rastreáveis, sem execução destrutiva por padrão." }].map(({ icon: Icon, title, text }) => <button className="skill-card" key={title}><span className="skill-icon"><Icon size={17} /></span><span><strong>{title}</strong><small>{text}</small></span><span className="toggle toggle-on"><span /></span></button>)}</div><div className="panel-note"><Sparkles size={15} /> Skills são instruções reutilizáveis. MCPs fornecem ferramentas e dados.</div></section>;
-  if (panel === "mcp") return <section className="control-panel"><PanelHeader icon={<Network size={19} />} eyebrow="Model Context Protocol" title="Servidores MCP reais" description="Conecte endpoints HTTP MCP e descubra as ferramentas disponíveis." onClose={() => setPanel(null)} /><div className="mcp-list">{mcpServers.map((server) => <div className="mcp-row" key={server.url}><span className="mcp-status"><span className="live-dot" /></span><span><strong>{server.name}</strong><small>{server.url} · {server.tools.length} ferramentas: {server.tools.slice(0, 4).join(", ") || "nenhuma listada"}</small></span><button title="Endpoint conectado"><Settings2 size={15} /></button></div>)}</div><div className="mcp-add"><label>Endpoint MCP HTTP/SSE</label><div className="search-row"><Server size={16} /><input value={mcpUrl} onChange={(event) => setMcpUrl(event.target.value)} placeholder="https://seu-servidor/mcp" /><button onClick={() => void connectMcp()}>Conectar</button></div><input className="mcp-token-input" value={mcpToken} onChange={(event) => setMcpToken(event.target.value)} placeholder="Token Bearer opcional" type="password" /></div><div className="panel-note"><ShieldCheck size={15} /> O Lumina faz initialize e tools/list para validar a conexão. Você pode conectar quantos endpoints MCP precisar; o limite prático depende da memória e da rede.</div></section>;
+  if (panel === "mcp") return <section className="control-panel"><PanelHeader icon={<Network size={19} />} eyebrow="Model Context Protocol" title="Servidores MCP reais" description="Conecte endpoints HTTP MCP e descubra as ferramentas disponíveis." onClose={() => setPanel(null)} /><div className="mcp-list">{mcpServers.map((server) => <div className="mcp-row" key={server.url}><span className="mcp-status"><span className="live-dot" /></span><span><strong>{server.name}</strong><small>{server.url} · {server.tools.length} ferramentas: {server.tools.slice(0, 4).map((tool) => tool.name).join(", ") || "nenhuma listada"}</small></span><button title="Endpoint conectado"><Settings2 size={15} /></button></div>)}</div><div className="mcp-add"><label>Endpoint MCP HTTP/SSE</label><div className="search-row"><Server size={16} /><input value={mcpUrl} onChange={(event) => setMcpUrl(event.target.value)} placeholder="https://seu-servidor/mcp" /><button onClick={() => void connectMcp()}>Conectar</button></div><input className="mcp-token-input" value={mcpToken} onChange={(event) => setMcpToken(event.target.value)} placeholder="Token Bearer opcional" type="password" /></div><div className="panel-note"><ShieldCheck size={15} /> O Lumina faz initialize e tools/list para validar a conexão. Você pode conectar quantos endpoints MCP precisar; o limite prático depende da memória e da rede.</div></section>;
   return <section className="control-panel"><PanelHeader icon={<Link2 size={19} />} eyebrow="Conexão principal" title="OpenRouter API" description="A Lumina usa a OpenRouter para conversar com os modelos escolhidos. MCP e upload de arquivos ficam nos painéis próprios." onClose={() => setPanel(null)} /><div className="connection-card"><div className="connection-icon openrouter-icon"><Globe2 size={18} /></div><div><strong>OpenRouter API</strong><small>{openRouterReady ? "Conectada e pronta para os modelos" : "Cole sua chave para habilitar a API"}</small></div><span className={openRouterReady ? "connection-status" : "connection-status status-muted"}>{openRouterReady ? "conectado" : "pendente"}</span></div><div className="connection-form"><input className="mcp-token-input" value={openRouterInput} onChange={(event) => setOpenRouterInput(event.target.value)} placeholder="Chave da OpenRouter" type="password" /><button className="install-button" onClick={() => void connectOpenRouter()} disabled={savingConnection === "openrouter"}>{savingConnection === "openrouter" ? <Loader2 size={14} className="spin" /> : <Globe2 size={14} />} Validar e conectar</button></div><div className="panel-note"><ShieldCheck size={15} /> A chave é validada no servidor e não aparece novamente na interface.</div></section>;
 }
 
