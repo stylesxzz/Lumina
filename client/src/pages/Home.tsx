@@ -166,14 +166,47 @@ export default function Home() {
       if (provider === "openrouter") {
         const key = window.localStorage.getItem("lumina.openrouter.key");
         if (!key || !openRouterReady) throw new Error("OpenRouter não conectada. Abra Conexões e valide sua chave.");
-        const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-          method: "POST",
-          headers: { Authorization: "Bearer " + key, "Content-Type": "application/json", "X-OpenRouter-Title": "Lumina Studio" },
-          body: JSON.stringify({ model, messages: [{ role: "system", content: t.system }, ...messages.filter((item) => item.role !== "system").slice(-10).map((item) => ({ role: item.role, content: item.content })), { role: "user", content: text + attachmentText }], temperature: 0.2 })
-        });
-        const payload = await response.json();
-        if (!response.ok) throw new Error(payload?.error?.message || "OpenRouter HTTP " + response.status);
-        content = payload?.choices?.[0]?.message?.content || "O modelo não retornou texto.";
+        const history: any[] = [...messages.filter((item) => item.role !== "system").slice(-10).map((item) => ({ role: item.role, content: item.content })), { role: "user", content: text + attachmentText }];
+        const toolLookup = new Map<string, { server: McpServer; tool: McpTool }>();
+        const tools = mcpServers.flatMap((server, serverIndex) => server.tools.map((tool) => {
+          const name = ("mcp_" + serverIndex + "_" + tool.name).replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64);
+          toolLookup.set(name, { server, tool });
+          return { type: "function", function: { name, description: ("MCP " + server.name + ": " + (tool.description || tool.name)).slice(0, 1000), parameters: tool.inputSchema || { type: "object", properties: {} } } };
+        }));
+        for (let round = 0; round < 4; round++) {
+          const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+            method: "POST",
+            headers: { Authorization: "Bearer " + key, "Content-Type": "application/json", "X-OpenRouter-Title": "Lumina Studio" },
+            body: JSON.stringify({ model, messages: [{ role: "system", content: t.system }, ...history], ...(tools.length ? { tools, tool_choice: "auto" } : {}), temperature: 0.2 })
+          });
+          const payload = await response.json();
+          if (!response.ok) throw new Error(payload?.error?.message || "OpenRouter HTTP " + response.status);
+          const answer = payload?.choices?.[0]?.message;
+          if (!answer) throw new Error("A OpenRouter não retornou uma resposta válida.");
+          if (!Array.isArray(answer.tool_calls) || answer.tool_calls.length === 0) {
+            content = typeof answer.content === "string" ? answer.content : JSON.stringify(answer.content ?? "O modelo não retornou texto.");
+            break;
+          }
+          history.push({ role: "assistant", content: answer.content || null, tool_calls: answer.tool_calls });
+          for (const call of answer.tool_calls) {
+            const target = toolLookup.get(call.function?.name);
+            if (!target) { history.push({ role: "tool", tool_call_id: call.id, content: "Ferramenta MCP não encontrada." }); continue; }
+            try {
+              const headers: Record<string, string> = { "Content-Type": "application/json", Accept: "application/json, text/event-stream" };
+              if (target.server.token) headers.Authorization = "Bearer " + target.server.token;
+              if (target.server.sessionId) headers["mcp-session-id"] = target.server.sessionId;
+              const toolResponse = await fetch(target.server.url, { method: "POST", headers, body: JSON.stringify({ jsonrpc: "2.0", id: Date.now(), method: "tools/call", params: { name: target.tool.name, arguments: JSON.parse(call.function.arguments || "{}") } }) });
+              const raw = await toolResponse.text();
+              const dataLine = raw.split("\\n").filter((line) => line.startsWith("data:")).pop();
+              const result = dataLine ? JSON.parse(dataLine.slice(5).trim()) : JSON.parse(raw || "{}");
+              if (!toolResponse.ok || result.error) throw new Error(result.error?.message || "MCP HTTP " + toolResponse.status);
+              history.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(result.result ?? result).slice(0, 12000) });
+            } catch (toolError) {
+              history.push({ role: "tool", tool_call_id: call.id, content: "Falha MCP: " + (toolError instanceof Error ? toolError.message : "erro desconhecido") });
+            }
+          }
+          if (round === 3) content = "As ferramentas MCP atingiram o limite de 4 ciclos. Peça uma tarefa mais específica.";
+        }
       } else {
         throw new Error("O runtime GGUF local ainda não está integrado a este APK. Não vou simular uma resposta de IA.");
       }
