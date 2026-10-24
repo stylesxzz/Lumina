@@ -86,7 +86,9 @@ const $=s=>document.querySelector(s);
 const esc=s=>s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 const md=s=>esc(s).replace(/```(\w*)\n?([\s\S]*?)```/g,'<pre><code>$2</code></pre>').replace(/`([^`\n]+)`/g,'<code>$1</code>').replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>').replace(/\n/g,'<br>');
 const toast=t=>{const e=$('#toast');e.textContent=t;e.style.display='block';clearTimeout(toast.t);toast.t=setTimeout(()=>e.style.display='none',3500)};
-const fmt=n=>n>1e9?(n/1e9).toFixed(2)+' GB':(n/1e6).toFixed(0)+' MB';
+const fmt=n=>n>1e9?(n/1e9).toFixed(2)+' GB':n>1e6?(n/1e6).toFixed(1)+' MB':(n/1e3).toFixed(0)+' KB';
+const fileTextType=f=>/^(text\/|application\/(json|javascript|xml|csv|sql|x-sh|yaml|toml)|image\/(svg\+xml))/.test(f.type)||/\.(txt|md|markdown|json|csv|tsv|js|jsx|ts|tsx|py|java|kt|c|cpp|h|css|html|xml|yaml|yml|toml|sql|sh|log|env)$/i.test(f.name);
+async function readAttachment(f){if(fileTextType(f)){return {name:f.name,size:f.size,type:f.type||'text/plain',text:(await f.text()).slice(0,30000)}}return {name:f.name,size:f.size,type:f.type||'application/octet-stream',text:'[Arquivo binário anexado. Nome: '+f.name+'; tamanho: '+fmt(f.size)+'. O modelo local pode não conseguir interpretar este formato.]'}}
 /* armazenamento: modelos em IndexedDB, resto em localStorage */
 const dbp=new Promise(r=>{const q=indexedDB.open('lumina',1);q.onupgradeneeded=()=>q.result.createObjectStore('models');q.onsuccess=()=>r(q.result)});
 const tx=async(m,f)=>{const d=await dbp;return new Promise((res,rej)=>{const t=d.transaction('models',m);const r=f(t.objectStore('models'));t.oncomplete=()=>res(r.result);t.onerror=()=>rej(t.error)})};
@@ -118,17 +120,21 @@ async function loadModel(name){
   }catch(e){W=null;toast('Erro: '+e.message)}
   render();
 }
+window.__mcpResult=(id,status,contentType,sessionId,body)=>{const w=window.__mcpWait&&window.__mcpWait[id];if(w){delete window.__mcpWait[id];w.resolve({status,contentType,sessionId,body})}};
 /* MCP (HTTP) */
 async function rpc(s,method,params,note){
   const h={'Content-Type':'application/json','Accept':'application/json, text/event-stream'};
   if(s.sid)h['Mcp-Session-Id']=s.sid;if(s.token)h.Authorization='Bearer '+s.token;
-  const r=await fetch(s.url,{method:'POST',headers:h,body:JSON.stringify(note?{jsonrpc:'2.0',method,params}:{jsonrpc:'2.0',id:Date.now(),method,params})});
-  const sid=r.headers.get('Mcp-Session-Id');if(sid)s.sid=sid;
-  if(note)return;if(!r.ok)throw Error('HTTP '+r.status);
-  const t=await r.text();let j;
-  if((r.headers.get('content-type')||'').includes('event-stream'))j=t.split('\n').filter(x=>x.startsWith('data:')).map(x=>JSON.parse(x.slice(5))).find(x=>x.result||x.error);
-  else j=JSON.parse(t);
-  if(j.error)throw Error(j.error.message);return j.result;
+  const payload=JSON.stringify(note?{jsonrpc:'2.0',method,params}:{jsonrpc:'2.0',id:Date.now(),method,params});
+  let status,ct,t,sid;
+  if(window.AndroidMcp){const z=await new Promise((resolve,reject)=>{const id='m'+Date.now()+Math.random().toString(16).slice(2);window.__mcpWait=window.__mcpWait||{};window.__mcpWait[id]={resolve,reject};window.AndroidMcp.post(s.url,JSON.stringify(h),payload,id)});status=z.status;ct=z.contentType||'';t=z.body||'';sid=z.sessionId||null}
+  else{const r=await fetch(s.url,{method:'POST',headers:h,body:payload});status=r.status;ct=r.headers.get('content-type')||'';t=await r.text();sid=r.headers.get('Mcp-Session-Id')}
+  if(sid)s.sid=sid;
+  if(note)return;if(status<200||status>=300)throw Error('HTTP '+status+(t?' · '+t.slice(0,180):''));
+  if(!t.trim())return {};let j;
+  if(ct.includes('event-stream')||t.includes('data:')){const rows=t.split(/\r?\n/).filter(x=>x.startsWith('data:')).map(x=>{try{return JSON.parse(x.slice(5).trim())}catch{return null}}).filter(Boolean);j=rows.find(x=>x.result||x.error)||rows[rows.length-1]}
+  else{try{j=JSON.parse(t)}catch{throw Error('Resposta MCP inválida')}}
+  if(!j)throw Error('Resposta MCP vazia');if(j.error)throw Error(j.error.message||JSON.stringify(j.error));return j.result;
 }
 async function init(s){await rpc(s,'initialize',{protocolVersion:'2025-03-26',capabilities:{},clientInfo:{name:'Lumina',version:'1.0'}});await rpc(s,'notifications/initialized',{},1);s.ready=1}
 async function callTool(name,args){
@@ -140,7 +146,9 @@ async function callTool(name,args){
 const toolPrompt=()=>{const t=servers.flatMap(s=>s.tools);return t.length?'\n\nFerramentas MCP disponíveis. Para usar uma, responda somente com um bloco ```tool {"name":"...","arguments":{...}}``` e aguarde o resultado.\n'+t.map(x=>`- ${x.name}: ${x.description||''} ${JSON.stringify(x.inputSchema?.properties||{})}`).join('\n'):''};
 /* conversa */
 async function run(depth=0){
-  const sys={role:'system',content:'Você é a Lumina, uma assistente clara e prestativa. Responda no idioma do usuário.'+toolPrompt()};
+  const sys={role:'system',content:`Você é a Lumina, uma assistente profissional, clara e prestativa. Responda no idioma do usuário.
+
+Você também atua como especialista profissional em cybersecurity, com foco defensivo e autorizado: análise de riscos, hardening, arquitetura segura, resposta a incidentes, threat modeling, privacidade, DevSecOps, auditoria e explicação de vulnerabilidades. Seja técnica, precisa e prática; informe premissas, impacto, evidências, mitigação e validação. Nunca invente resultados. Só ajude em ambientes próprios ou explicitamente autorizados. Não forneça malware, roubo de credenciais, phishing, persistência, evasão, exploração destrutiva ou instruções para atacar terceiros. Para testes autorizados, prefira laboratório, exemplos inofensivos, comandos reversíveis e limites claros. Ao detectar um pedido perigoso, recuse a parte ofensiva e ofereça uma alternativa defensiva segura.`+toolPrompt()};
   const m={role:'assistant',content:''};cur.msgs.push(m);render();
   const el=()=>$('#w').querySelector('.m:last-child .b');
   await W.createChatCompletion([sys,...cur.msgs.slice(0,-1).map(x=>({role:x.role,content:x.content}))],{nPredict:1024,sampling:{temp:.7},onNewToken:(t,p,text)=>{m.content=text;const e=el();if(e){e.innerHTML=md(text);$('#msgs').scrollTop=1e9}}});
@@ -154,7 +162,7 @@ async function run(depth=0){
 async function send(){
   if(busy)return;const text=$('#in').value.trim();if(!text&&!att.length)return;
   if(!W){toast('Carregue um modelo em Modelos e MCP');return openCfg()}
-  let c=text;att.forEach(a=>c+=`\n\n[Arquivo: ${a.name}]\n\`\`\`\n${a.text.slice(0,8000)}\n\`\`\``);
+  let c=text;att.forEach(a=>c+=`\n\n[Arquivo: ${a.name} | ${a.type} | ${fmt(a.size)}]\n\`\`\`\n${a.text.slice(0,12000)}\n\`\`\``);
   if(cur.title=='Nova conversa')cur.title=(text||att[0].name).slice(0,40);
   cur.msgs.push({role:'user',content:c});$('#in').value='';att=[];busy=true;
   try{await run()}catch(e){toast('Erro: '+e.message)}
@@ -184,7 +192,11 @@ async function cfg(){
 }
 async function hfDownload(url,name){
   try{
-    const r=await fetch(url);if(!r.ok)throw Error('HTTP '+r.status);
+    url=url.trim().replace(/\/blob\//,'/resolve/');
+    if(!/^https?:\/\//i.test(url))throw Error('Link inválido');
+    const r=await fetch(url, {redirect:'follow'});if(!r.ok)throw Error('HTTP '+r.status);
+    const cd=r.headers.get('content-disposition')||'',match=cd.match(/filename[*]?=(?:UTF-8''|\")?([^;\"]+)/i);if(match)name=decodeURIComponent(match[1].trim());
+    name=(name||'modelo.gguf').split('/').pop();
     const tot=+r.headers.get('content-length')||0,rd=r.body.getReader(),ch=[];let n=0;$('#pg').style.display='block';
     for(;;){const {done,value}=await rd.read();if(done)break;ch.push(value);n+=value.length;$('#pg i').style.width=(tot?n/tot*100:50)+'%';$('#pt').textContent=fmt(n)+(tot?' / '+fmt(tot):'')}
     await mput(name,new Blob(ch));toast('Modelo instalado');cfg();
@@ -209,7 +221,7 @@ $('#sheet').addEventListener('click',async e=>{
       $('#res').innerHTML=l.map(m=>`<div class="card"><div class="n">${esc(m.id)}<small>${m.downloads||0} downloads</small></div><button class="btn" data-repo="${esc(m.id)}">Arquivos</button></div>`).join('')||'<p class="mu">Nada encontrado.</p>'}
     catch(e){$('#res').innerHTML='<p class="mu">Erro: '+esc(e.message)+'</p>'}
   }
-  else if(t.id=='ug'){let u=$('#url').value.trim().replace('/blob/','/resolve/');if(u)hfDownload(u,decodeURIComponent(u.split('?')[0].split('/').pop()))}
+  else if(t.id=='ug'){let u=$('#url').value.trim();if(u)hfDownload(u,decodeURIComponent(u.split('?')[0].split('/').pop())||'modelo.gguf')}
   else if(t.id=='mc'){
     const s={name:$('#mn').value.trim()||'MCP',url:$('#mu').value.trim(),token:$('#mt').value.trim(),tools:[]};
     $('#ms').textContent='Conectando…';
@@ -217,8 +229,8 @@ $('#sheet').addEventListener('click',async e=>{
     catch(e){$('#ms').textContent='Erro: '+e.message+' (o servidor precisa liberar CORS)'}
   }
 });
-$('#fm').onchange=async e=>{const f=e.target.files[0];if(!f)return;await mput(f.name,f);e.target.value='';toast('Modelo adicionado');cfg()};
-$('#fa').onchange=async e=>{for(const f of e.target.files){try{att.push({name:f.name,text:await f.text()})}catch{}}e.target.value='';render()};
+$('#fm').onchange=async e=>{const f=e.target.files[0];if(!f)return;if(!/\.gguf$/i.test(f.name))return toast('Escolha um arquivo .gguf');if(!f.size)return toast('Arquivo vazio');await mput(f.name,f);e.target.value='';toast('Modelo adicionado: '+f.name);await cfg()};
+$('#fa').onchange=async e=>{for(const f of e.target.files){try{att.push(await readAttachment(f))}catch(err){toast('Falha ao ler '+f.name)}}e.target.value='';render()};
 $('#ov').onclick=e=>{if(e.target.id=='ov')$('#ov').classList.remove('on')};
 $('#att').onclick=e=>{const x=e.target.dataset.x;if(x!=null){e.preventDefault();att.splice(+x,1);render()}};
 $('#plus').onclick=()=>$('#fa').click();$('#send').onclick=send;$('#new').onclick=newChat;$('#cfg').onclick=openCfg;
