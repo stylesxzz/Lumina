@@ -141,10 +141,23 @@ export default function Home() {
   const searchHuggingFace = async () => {
     if (!search.trim()) return;
     try {
-      const response = await fetch(`/api/huggingface/models?search=${encodeURIComponent(search)}`);
+      if (provider === "openrouter") {
+        const key = window.localStorage.getItem("lumina.openrouter.key");
+        if (!key) throw new Error("Conecte a OpenRouter em Conexões primeiro.");
+        const response = await fetch("https://openrouter.ai/api/v1/models", { headers: { Authorization: "Bearer " + key } });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload?.error?.message || "Falha ao buscar modelos da OpenRouter.");
+        const models = (Array.isArray(payload.data) ? payload.data : []).filter((item: any) => (item.id + " " + (item.name || "")).toLowerCase().includes(search.toLowerCase())).slice(0, 80);
+        setHfModels(models.map((item: any) => ({ id: item.id, name: item.name || item.id, author: item.id.split("/")[0], pipeline_tag: "OpenRouter" })));
+        return;
+      }
+      const response = await fetch("https://huggingface.co/api/models?search=" + encodeURIComponent(search) + "&sort=downloads&direction=-1&limit=20");
       const payload = await response.json();
-      if (response.ok && Array.isArray(payload.models)) setHfModels(payload.models.map((item: Model) => ({ ...item, name: item.id.split("/").pop() || item.id, author: item.id.split("/")[0] })));
-    } catch { /* keep local catalog */ }
+      if (!response.ok) throw new Error(payload?.error || "Falha na busca do Hugging Face.");
+      if (Array.isArray(payload)) setHfModels(payload.map((item: Model) => ({ ...item, name: item.id.split("/").pop() || item.id, author: item.id.split("/")[0] })));
+    } catch (error) {
+      addMessage({ id: Date.now(), role: "system", content: error instanceof Error ? error.message : "Falha ao buscar modelos.", time: now() });
+    }
   };
 
   const send = async (value = draft) => {
