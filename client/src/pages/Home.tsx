@@ -232,21 +232,25 @@ export default function Home() {
   const clearChat = () => { setMessages([]); setDraft(""); setAttachments([]); setPanel(null); setMobileMenu(false); };
   const copyMessage = async (message: Message) => { try { await navigator.clipboard.writeText(message.content); } catch { /* Preview can block clipboard */ } setCopiedId(message.id); if (copyTimer.current) window.clearTimeout(copyTimer.current); copyTimer.current = window.setTimeout(() => setCopiedId(null), 1400); };
   const handleFiles = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(event.target.files || []);
-    if (!files.length) return;
+    const selected = Array.from(event.target.files || []);
+    if (!selected.length) return;
+    const ggufFiles = selected.filter((file) => file.name.toLowerCase().endsWith(".gguf"));
+    const files = selected.filter((file) => !file.name.toLowerCase().endsWith(".gguf"));
+    if (ggufFiles.length) {
+      addMessage({ id: Date.now(), role: "system", content: "Detectei " + ggufFiles.map((file) => file.name).join(", ") + ". Este APK ainda não inclui o runtime nativo GGUF; não vou ler o modelo inteiro na memória nem fingir que foi instalado. A integração nativa ainda está pendente.", time: now(), kind: "install" });
+    }
+    if (!files.length) { event.target.value = ""; return; }
     setUploading(true);
     try {
-      const uploaded = await Promise.all(files.map(async (file) => {
-        const data = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(reader.error); reader.readAsDataURL(file); });
-        const excerpt = file.type.startsWith("text/") || /\.(md|json|ts|tsx|js|jsx|py|java|go|rs|html|css|yaml|yml|csv|log)$/i.test(file.name) ? await file.text().then((value) => value.slice(0, 12000)) : undefined;
-        const response = await fetch("/api/files/upload", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: file.name, type: file.type, data }) });
-        const payload = await response.json();
-        if (!response.ok) throw new Error(payload.error || "Falha no upload");
-        return { name: file.name, type: file.type, size: file.size, excerpt, storedName: payload.storedName } as Attachment;
+      const attached = await Promise.all(files.map(async (file) => {
+        const isText = file.type.startsWith("text/") || /\\.(md|json|ts|tsx|js|jsx|py|java|go|rs|html|css|yaml|yml|csv|log|txt|xml|toml)$/i.test(file.name);
+        const excerpt = isText ? (await file.text()).slice(0, 12000) : undefined;
+        return { name: file.name, type: file.type, size: file.size, excerpt } as Attachment;
       }));
-      setAttachments((current) => [...current, ...uploaded]);
-    } catch (error) { addMessage({ id: Date.now(), role: "system", content: error instanceof Error ? error.message : "Não foi possível anexar o arquivo.", time: now() }); }
-    finally { setUploading(false); event.target.value = ""; }
+      setAttachments((current) => [...current, ...attached]);
+    } catch (error) {
+      addMessage({ id: Date.now(), role: "system", content: error instanceof Error ? error.message : "Não foi possível ler o arquivo.", time: now() });
+    } finally { setUploading(false); event.target.value = ""; }
   };
   const connectMcp = async () => {
     const value = mcpUrl.trim();
