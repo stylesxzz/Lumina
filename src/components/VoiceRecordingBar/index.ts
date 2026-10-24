@@ -1,1 +1,0 @@
-export {VoiceRecordingBar} from './VoiceRecordingBar';

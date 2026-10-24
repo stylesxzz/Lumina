@@ -1,1 +1,0 @@
-export {VoiceBar} from './VoiceBar';

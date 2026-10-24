@@ -1,1 +1,0 @@
-export {VoiceModeButton} from './VoiceModeButton';

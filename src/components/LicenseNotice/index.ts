@@ -1,1 +1,0 @@
-export {LicenseNotice} from './LicenseNotice';
